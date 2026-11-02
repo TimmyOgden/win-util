@@ -40,6 +40,19 @@
         </Trigger>
       </Style.Triggers>
     </Style>
+    <Style x:Key="AudioDevicePicker" TargetType="ComboBox" BasedOn="{StaticResource SettingsComboBox}">
+      <Setter Property="MinHeight" Value="26" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="Padding" Value="5,2" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="ItemTemplate">
+        <Setter.Value>
+          <DataTemplate>
+            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTip="{Binding Name}" />
+          </DataTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
   <Border Margin="12"
           Padding="16,12"
@@ -105,12 +118,23 @@
                              TextTrimming="CharacterEllipsis"
                              TextWrapping="NoWrap"
                              ToolTip="{Binding Name}" />
-                  <TextBlock Grid.Column="2"
-                             Margin="12,0,0,0"
-                             VerticalAlignment="Center"
-                             Foreground="{StaticResource AccentBrush}"
-                             Style="{StaticResource ValueText}"
-                             Text="{Binding Percentage, StringFormat={}{0}%}" />
+                  <StackPanel Grid.Column="2" Margin="12,0,0,0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Text="{Binding StatusText}" ToolTip="{Binding StatusToolTip}">
+                      <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource CaptionText}">
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding StatusText}" Value="">
+                              <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Foreground="{StaticResource AccentBrush}"
+                               Style="{StaticResource ValueText}"
+                               Text="{Binding PercentageText}"
+                               ToolTip="{Binding StatusToolTip}" />
+                  </StackPanel>
                 </Grid>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
@@ -125,6 +149,7 @@
           <TextBlock x:Name="AudioStatusText"
                      Style="{StaticResource ProviderStatus}"
                      Text="CHECKING"
+                     TextWrapping="Wrap"
                      ToolTip="Audio devices could not be refreshed." />
           <Grid MinHeight="26">
             <Grid.ColumnDefinitions>
@@ -132,29 +157,47 @@
               <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <TextBlock Style="{StaticResource DeviceGlyph}" Text="&#xE767;" ToolTip="Audio output" />
-            <TextBlock x:Name="OutputDeviceText"
-                       Grid.Column="1"
-                       VerticalAlignment="Center"
-                       Text="Checking output device"
-                       TextTrimming="CharacterEllipsis"
-                       TextWrapping="NoWrap"
-                       ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
-                       AutomationProperties.Name="Audio output" />
+            <Grid Grid.Column="1">
+              <ComboBox x:Name="OutputDeviceComboBox" Style="{StaticResource AudioDevicePicker}"
+                        SelectionChanged="HandleOutputDeviceSelectionChanged" AutomationProperties.Name="Audio output device"
+                        ToolTip="Choose the default output for Windows and applications" />
+              <TextBlock x:Name="OutputDeviceText" Margin="6,0,20,0" VerticalAlignment="Center" IsHitTestVisible="False"
+                         Text="Checking output device" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                         ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.Name="Audio output" />
+            </Grid>
+          </Grid>
+          <Grid MinHeight="24" Margin="24,2,0,2">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Slider x:Name="OutputVolumeSlider" Style="{StaticResource SettingsSlider}" Minimum="0" Maximum="100"
+                    SmallChange="1" LargeChange="10" ValueChanged="HandleOutputVolumeChanged"
+                    PreviewMouseLeftButtonDown="HandleOutputVolumeMouseDown" PreviewMouseLeftButtonUp="HandleOutputVolumeMouseUp"
+                    LostMouseCapture="HandleOutputVolumeLostMouseCapture" PreviewKeyDown="HandleOutputVolumeKeyDown"
+                    PreviewKeyUp="HandleOutputVolumeKeyUp" LostKeyboardFocus="HandleOutputVolumeLostKeyboardFocus"
+                    AutomationProperties.Name="Output volume" ToolTip="Adjust the default output volume" />
+            <TextBlock x:Name="OutputVolumeValueText" Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center"
+                       Style="{StaticResource ValueText}" Text="Unavailable" />
           </Grid>
           <Grid MinHeight="26">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto" />
               <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBlock Style="{StaticResource DeviceGlyph}" Text="&#xE720;" ToolTip="Audio input" />
-            <TextBlock x:Name="InputDeviceText"
-                       Grid.Column="1"
-                       VerticalAlignment="Center"
-                       Text="Checking input device"
-                       TextTrimming="CharacterEllipsis"
-                       TextWrapping="NoWrap"
-                       ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
-                       AutomationProperties.Name="Audio input" />
+            <Grid Grid.Column="1">
+              <ComboBox x:Name="InputDeviceComboBox" Style="{StaticResource AudioDevicePicker}"
+                        SelectionChanged="HandleInputDeviceSelectionChanged" AutomationProperties.Name="Audio input device"
+                        ToolTip="Choose the default microphone for Windows and applications" />
+              <TextBlock x:Name="InputDeviceText" Margin="6,0,20,0" VerticalAlignment="Center" IsHitTestVisible="False"
+                         Text="Checking input device" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                         ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" AutomationProperties.Name="Audio input" />
+            </Grid>
+            <Button x:Name="MicrophoneMuteButton" Grid.Column="2" Margin="6,0,0,0" Padding="6,3"
+                    Style="{StaticResource CompactSecondaryButton}" Content="Mute" Click="HandleMicrophoneMute"
+                    AutomationProperties.Name="Mute microphone" ToolTip="Mute the default microphone" />
           </Grid>
         </StackPanel>
       </Border>

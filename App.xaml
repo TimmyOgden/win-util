@@ -4,6 +4,30 @@
              xmlns:sys="clr-namespace:System;assembly=mscorlib"
              xmlns:controls="clr-namespace:WinUtil.Views.Controls">
   <Application.Resources>
+    <DrawingImage x:Key="WinUtilWindowIcon">
+      <DrawingImage.Drawing>
+        <DrawingGroup>
+          <GeometryDrawing Brush="#FF75D9C9" Geometry="M4,0 L20,0 Q24,0 24,4 L24,20 Q24,24 20,24 L4,24 Q0,24 0,20 L0,4 Q0,0 4,0" />
+          <GeometryDrawing Geometry="M5,6 L8,18 L12,11 L16,18 L19,6">
+            <GeometryDrawing.Pen><Pen Brush="#FF1E2225" Thickness="2.5" StartLineCap="Round" EndLineCap="Round" LineJoin="Round" /></GeometryDrawing.Pen>
+          </GeometryDrawing>
+        </DrawingGroup>
+      </DrawingImage.Drawing>
+    </DrawingImage>
+    <DrawingImage x:Key="ScreenshotWindowIcon">
+      <DrawingImage.Drawing>
+        <DrawingGroup>
+          <GeometryDrawing Brush="#FF75D9C9" Geometry="M4,0 L20,0 Q24,0 24,4 L24,20 Q24,24 20,24 L4,24 Q0,24 0,20 L0,4 Q0,0 4,0" />
+          <GeometryDrawing Brush="#FF1E2225" Geometry="M5,7 L8,7 L10,4 L15,4 L17,7 L20,7 L20,19 L4,19 L4,7 Z" />
+          <GeometryDrawing Brush="#FF75D9C9">
+            <GeometryDrawing.Geometry><EllipseGeometry Center="12,12.5" RadiusX="4" RadiusY="4" /></GeometryDrawing.Geometry>
+          </GeometryDrawing>
+          <GeometryDrawing Brush="#FF1E2225">
+            <GeometryDrawing.Geometry><EllipseGeometry Center="12,12.5" RadiusX="2.5" RadiusY="2.5" /></GeometryDrawing.Geometry>
+          </GeometryDrawing>
+        </DrawingGroup>
+      </DrawingImage.Drawing>
+    </DrawingImage>
     <Color x:Key="Ink950">#FF1E2225</Color>
     <Color x:Key="Ink900">#FF272B2E</Color>
     <Color x:Key="Ink800">#FF33383C</Color>
@@ -514,7 +538,9 @@
                         <ContentPresenter VerticalAlignment="Center"
                                           TextElement.Foreground="{StaticResource TextPrimaryBrush}"
                                           Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}"
-                                          ContentTemplate="{Binding SelectionBoxItemTemplate, RelativeSource={RelativeSource AncestorType=ComboBox}}" />
+                                          ContentTemplate="{Binding SelectionBoxItemTemplate, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                          ContentTemplateSelector="{Binding ItemTemplateSelector, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                          ContentStringFormat="{Binding SelectionBoxItemStringFormat, RelativeSource={RelativeSource AncestorType=ComboBox}}" />
                         <Path Grid.Column="1"
                               Width="8"
                               Height="5"

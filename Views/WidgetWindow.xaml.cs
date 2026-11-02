@@ -2,10 +2,14 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using WinUtil.Models;
 using WinUtil.Services;
+using ButtonBase = System.Windows.Controls.Primitives.ButtonBase;
+using TextBoxBase = System.Windows.Controls.Primitives.TextBoxBase;
 
 namespace WinUtil.Views;
 
@@ -22,6 +26,8 @@ public partial class WidgetWindow : Window
     private readonly DispatcherTimer audioTimer;
     private readonly DispatcherTimer autoHideTimer;
     private readonly IBatteryStatusProvider batteryStatusProvider;
+    private readonly BatteryAlertPolicy batteryAlertPolicy = new();
+    private readonly Action<IReadOnlyList<BatteryDevice>>? notifyLowBatteries;
     private readonly DispatcherTimer batteryTimer;
     private readonly CancellationTokenSource batteryUpdateCancellation = new();
     private readonly DispatcherTimer clockTimer;
@@ -36,11 +42,13 @@ public partial class WidgetWindow : Window
         WidgetSettings settings,
         Action<WidgetSettings> saveSettings,
         IBatteryStatusProvider batteryStatusProvider,
-        IAudioDeviceProvider audioDeviceProvider)
+        IAudioDeviceProvider audioDeviceProvider,
+        Action<IReadOnlyList<BatteryDevice>>? notifyLowBatteries = null)
     {
         InitializeComponent();
         this.batteryStatusProvider = batteryStatusProvider;
         this.audioDeviceProvider = audioDeviceProvider;
+        this.notifyLowBatteries = notifyLowBatteries;
         currentSettings = settings.Normalize();
         positionPersistence = new WidgetPositionPersistence(() => currentSettings, saveSettings);
         autoHideTimer = new DispatcherTimer { Interval = AutoHidePollInterval };
@@ -99,6 +107,7 @@ public partial class WidgetWindow : Window
 
     protected override void OnClosing(CancelEventArgs e)
     {
+        CancelOutputVolumeAdjustment();
         if (!canClose)
         {
             positionPersistence.SaveNow();
@@ -123,6 +132,7 @@ public partial class WidgetWindow : Window
         audioTimer.Tick -= HandleAudioTimerTick;
         clockTimer.Stop();
         clockTimer.Tick -= HandleClockTick;
+        CloseAudioControls();
         base.OnClosed(e);
     }
 
@@ -165,10 +175,30 @@ public partial class WidgetWindow : Window
 
     private void HandleDragMove(object sender, MouseButtonEventArgs e)
     {
-        if (e.LeftButton == MouseButtonState.Pressed)
+        if (e.LeftButton == MouseButtonState.Pressed && CanDragFrom(e.OriginalSource as DependencyObject))
         {
             DragMove();
         }
+    }
+
+    internal static bool CanDragFrom(DependencyObject? source)
+    {
+        if (source is null)
+        {
+            return false;
+        }
+
+        while (source is not null)
+        {
+            if (source is ButtonBase or TextBoxBase or Selector or RangeBase)
+            {
+                return false;
+            }
+
+            source = source is FrameworkContentElement content ? content.Parent : VisualTreeHelper.GetParent(source);
+        }
+
+        return true;
     }
 
     private void HandleMouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
@@ -246,7 +276,7 @@ public partial class WidgetWindow : Window
         DateText.Text = now.ToString("dddd, d MMMM", CultureInfo.CurrentCulture);
     }
 
-    private async Task UpdateBatteryStatusAsync()
+    internal async Task UpdateBatteryStatusAsync()
     {
         if (isBatteryUpdateInProgress || batteryUpdateCancellation.IsCancellationRequested)
         {
@@ -258,10 +288,21 @@ public partial class WidgetWindow : Window
         try
         {
             var snapshot = await batteryStatusProvider.GetSnapshotAsync(batteryUpdateCancellation.Token);
+            if (batteryUpdateCancellation.IsCancellationRequested)
+            {
+                return;
+            }
+
             BatteryDevicesItemsControl.ItemsSource = snapshot.Devices;
             BatteryDevicesItemsControl.Visibility = snapshot.HasDevices ? Visibility.Visible : Visibility.Collapsed;
             BatteryEmptyText.Visibility = snapshot.HasDevices ? Visibility.Collapsed : Visibility.Visible;
-            BatteryStatusText.Text = snapshot.BluetoothErrorMessage is null ? "LIVE" : "UNAVAILABLE";
+            BatteryStatusText.Text = snapshot.ErrorMessage is null ? "LIVE" : "UNAVAILABLE";
+            BatteryStatusText.ToolTip = snapshot.ErrorMessage;
+            var lowBatteries = batteryAlertPolicy.Evaluate(snapshot, currentSettings.BatteryAlerts);
+            if (lowBatteries.Count > 0)
+            {
+                notifyLowBatteries?.Invoke(lowBatteries);
+            }
         }
         catch (OperationCanceledException) when (batteryUpdateCancellation.IsCancellationRequested)
         {
@@ -272,12 +313,4 @@ public partial class WidgetWindow : Window
         }
     }
 
-    private void UpdateAudioStatus()
-    {
-        var snapshot = audioDeviceProvider.GetSnapshot();
-
-        OutputDeviceText.Text = snapshot.HasOutputDevice ? snapshot.OutputDeviceName : "No active output device";
-        InputDeviceText.Text = snapshot.HasInputDevice ? snapshot.InputDeviceName : "No active input device";
-        AudioStatusText.Text = snapshot.ErrorMessage is null ? "LIVE" : "UNAVAILABLE";
-    }
 }
