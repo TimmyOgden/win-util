@@ -1,9 +1,17 @@
+using WinUtil.Services;
+
 namespace WinUtil.Models;
 
 internal sealed record SpotlightShortcuts
 {
     internal const uint PaletteModifiers = GlobalShortcut.AltModifier;
     internal const uint PaletteVirtualKey = 0x32;
+
+    internal static GlobalShortcut DefaultPalette { get; } = new()
+    {
+        Modifiers = PaletteModifiers,
+        VirtualKey = PaletteVirtualKey
+    };
 
     // JSON shape is one named property per action; this table is the single place that maps action ids onto them.
     private static readonly IReadOnlyList<ShortcutAccessor> Accessors =
@@ -20,6 +28,8 @@ internal sealed record SpotlightShortcuts
         new(SpotlightActionIds.Uppercase, shortcuts => shortcuts.Uppercase, (shortcuts, value) => shortcuts with { Uppercase = value }),
         new(SpotlightActionIds.Lowercase, shortcuts => shortcuts.Lowercase, (shortcuts, value) => shortcuts with { Lowercase = value })
     ];
+
+    public GlobalShortcut Palette { get; init; } = DefaultPalette;
 
     public GlobalShortcut? FormatJson { get; init; }
 
@@ -59,14 +69,19 @@ internal sealed record SpotlightShortcuts
     {
         var bindings = GetBindings();
 
+        if (Palette is not { IsValid: true })
+        {
+            return "The Spotlight shortcut must include Ctrl, Alt, or Shift and a regular key.";
+        }
+
         if (bindings.Any(binding => !binding.Shortcut.IsValid))
         {
             return "Each shortcut must include Ctrl, Alt, or Shift and a regular key.";
         }
 
-        if (bindings.Any(IsPaletteShortcut))
+        if (bindings.Any(binding => binding.Shortcut.Modifiers == Palette.Modifiers && binding.Shortcut.VirtualKey == Palette.VirtualKey))
         {
-            return "Alt+2 is reserved for opening Spotlight.";
+            return $"{ShortcutFormatter.Format(Palette)} is reserved for opening Spotlight.";
         }
 
         if (bindings.GroupBy(binding => binding.Shortcut).Any(group => group.Count() > 1))
@@ -78,15 +93,12 @@ internal sealed record SpotlightShortcuts
     }
 
     internal SpotlightShortcuts Normalize() => Accessors.Aggregate(
-        this,
+        this with { Palette = NormalizeShortcut(Palette) ?? DefaultPalette },
         (shortcuts, accessor) => accessor.Set(shortcuts, NormalizeShortcut(accessor.Get(shortcuts))));
 
     private static ShortcutAccessor FindAccessor(string actionId) =>
         Accessors.FirstOrDefault(accessor => accessor.ActionId == actionId)
         ?? throw new ArgumentOutOfRangeException(nameof(actionId), actionId, "Unsupported Spotlight action.");
-
-    private static bool IsPaletteShortcut(SpotlightShortcutBinding binding) => binding.Shortcut.Modifiers == PaletteModifiers
-        && binding.Shortcut.VirtualKey == PaletteVirtualKey;
 
     private static GlobalShortcut? NormalizeShortcut(GlobalShortcut? shortcut) => shortcut is { IsValid: true }
         ? shortcut
