@@ -6,6 +6,13 @@ internal static class Program
     {
         var tests = new (string Name, Action Execute)[]
         {
+            (nameof(ScreenshotEditorWindowTests.HistoryPersistsAllSourcesAndOriginalPixelsAcrossStoreInstances), ScreenshotEditorWindowTests.HistoryPersistsAllSourcesAndOriginalPixelsAcrossStoreInstances),
+            (nameof(ScreenshotEditorWindowTests.HistoryRejectsInvalidImagesForeignPathsAndUnavailableStorage), ScreenshotEditorWindowTests.HistoryRejectsInvalidImagesForeignPathsAndUnavailableStorage),
+            (nameof(ScreenshotEditorWindowTests.HistoryPreviewsBoundBothOrientationsAndSupportMaximumDimensions), ScreenshotEditorWindowTests.HistoryPreviewsBoundBothOrientationsAndSupportMaximumDimensions),
+            (nameof(ScreenshotEditorWindowTests.HistoryWindowListsPreviewsReopensAndReportsMissingImages), ScreenshotEditorWindowTests.HistoryWindowListsPreviewsReopensAndReportsMissingImages),
+            (nameof(ScreenshotEditorWindowTests.ScreenshotTitleBarControlsPreserveCloseProtectionAndHistoryAction), ScreenshotEditorWindowTests.ScreenshotTitleBarControlsPreserveCloseProtectionAndHistoryAction),
+            (nameof(ScreenshotEditorWindowTests.EditorPublishesTheExactSavedAndCopiedPixelsToHistory), ScreenshotEditorWindowTests.EditorPublishesTheExactSavedAndCopiedPixelsToHistory),
+            (nameof(ScreenshotEditorWindowTests.HistoryRendersSyntheticPreviewWhenRequested), ScreenshotEditorWindowTests.HistoryRendersSyntheticPreviewWhenRequested),
             (nameof(SpotlightPreferencesTests.NormalizeAcceptsLegacyAndMalformedCollections), SpotlightPreferencesTests.NormalizeAcceptsLegacyAndMalformedCollections),
             (nameof(SpotlightPreferencesTests.FavoritesToggleWithoutChangingHistoryOrOriginalArrays), SpotlightPreferencesTests.FavoritesToggleWithoutChangingHistoryOrOriginalArrays),
             (nameof(SpotlightPreferencesTests.RecentCommandsAreUniqueBoundedAndMostRecentFirst), SpotlightPreferencesTests.RecentCommandsAreUniqueBoundedAndMostRecentFirst),

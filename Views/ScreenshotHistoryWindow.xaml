@@ -1,0 +1,84 @@
+<Window x:Class="WinUtil.Views.ScreenshotHistoryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:WinUtil.Views.Controls"
+        Title="Screenshot history" Width="1040" Height="720" MinWidth="800" MinHeight="520"
+        Background="{StaticResource CanvasBrush}" Foreground="{StaticResource TextPrimaryBrush}"
+        FontFamily="{StaticResource BodyFont}" FontSize="{StaticResource FontSizeBody}"
+        WindowStartupLocation="CenterScreen" WindowStyle="None" UseLayoutRounding="True"
+        Icon="{StaticResource ScreenshotWindowIcon}">
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="40" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False" />
+  </WindowChrome.WindowChrome>
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="40" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+    <controls:ScreenshotTitleBar x:Name="HistoryTitleBar" />
+    <Grid Grid.Row="1" Margin="24,20">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+      <StackPanel>
+        <TextBlock Text="Screenshot history" Style="{StaticResource TitleText}" />
+        <TextBlock x:Name="CountText" Margin="0,4,0,0" Style="{StaticResource SecondaryText}" />
+      </StackPanel>
+      <Button x:Name="RefreshButton" Grid.Column="1" Content="Refresh" Style="{StaticResource SecondaryButton}"
+              VerticalAlignment="Center" Click="HandleRefresh" />
+    </Grid>
+    <Grid Grid.Row="2">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+      <Border Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource DividerBrush}" BorderThickness="0,1,1,1">
+        <ListBox x:Name="HistoryList" Background="Transparent" BorderThickness="0" Foreground="{StaticResource TextPrimaryBrush}"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                 SelectionChanged="HandleSelectionChanged" MouseDoubleClick="HandleDoubleClick" PreviewKeyDown="HandleListKeyDown"
+                 AutomationProperties.Name="Saved screenshots" HorizontalContentAlignment="Stretch">
+          <ListBox.ItemContainerStyle>
+            <Style TargetType="ListBoxItem">
+              <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+              <Setter Property="Padding" Value="16,12" />
+              <Setter Property="Margin" Value="4,2" />
+              <Setter Property="Template">
+                <Setter.Value>
+                  <ControlTemplate TargetType="ListBoxItem">
+                    <Border x:Name="Row" Padding="{TemplateBinding Padding}" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="4">
+                      <ContentPresenter />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="{StaticResource SurfaceInteractiveBrush}" /></Trigger>
+                      <Trigger Property="IsSelected" Value="True"><Setter TargetName="Row" Property="Background" Value="{StaticResource AccentMutedBrush}" /></Trigger>
+                      <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Row" Property="BorderBrush" Value="{StaticResource AccentBrush}" /></Trigger>
+                    </ControlTemplate.Triggers>
+                  </ControlTemplate>
+                </Setter.Value>
+              </Setter>
+            </Style>
+          </ListBox.ItemContainerStyle>
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <StackPanel>
+                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding CreatedText}" Style="{StaticResource CaptionText}" Margin="0,4,0,0" />
+                <TextBlock Text="{Binding SizeText}" Style="{StaticResource CaptionText}" Margin="0,4,0,0" />
+              </StackPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Border>
+      <Grid Grid.Column="1" Margin="24">
+        <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <Image x:Name="PreviewImage" Stretch="Uniform" AutomationProperties.Name="Selected screenshot preview" />
+        <TextBlock x:Name="EmptyText" Text="No screenshots yet.&#x0a;Use Win+Shift+S or open an image to start your history."
+                   Style="{StaticResource SecondaryText}" TextAlignment="Center" TextWrapping="Wrap"
+                   VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="320" />
+        <Button x:Name="OpenEditorButton" Grid.Row="1" Content="Open in editor" Style="{StaticResource PrimaryButton}"
+                IsEnabled="False" HorizontalAlignment="Right" Margin="0,20,0,0" Click="HandleOpenEditor" />
+      </Grid>
+    </Grid>
+    <Border Grid.Row="3" Background="{StaticResource SurfaceBrush}" Padding="24,12">
+      <TextBlock x:Name="StatusText" Style="{StaticResource CaptionText}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+    </Border>
+  </Grid>
+</Window>

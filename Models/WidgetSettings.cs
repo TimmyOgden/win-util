@@ -26,6 +26,8 @@ internal sealed record WidgetSettings
 
     public bool OpenScreenshotEditorAfterCapture { get; init; } = true;
 
+    public bool KeepScreenshotHistory { get; init; } = true;
+
     public ScreenshotEditorOptions ScreenshotEditor { get; init; } = new();
 
     public BatteryAlertSettings BatteryAlerts { get; init; } = new();
