@@ -256,5 +256,9 @@ internal static class NativeWorkbenchWindowTests
     private sealed class SyntheticAudioProvider(AudioDeviceSnapshot snapshot) : IAudioDeviceProvider
     {
         public AudioDeviceSnapshot GetSnapshot() => snapshot;
+        public AudioOperationResult SetDefaultOutput(string deviceId) => throw new InvalidOperationException("Read-only audio fake received an output command.");
+        public AudioOperationResult SetDefaultInput(string deviceId) => throw new InvalidOperationException("Read-only audio fake received an input command.");
+        public AudioOperationResult SetOutputVolume(double percentage) => throw new InvalidOperationException("Read-only audio fake received a volume command.");
+        public AudioOperationResult SetMicrophoneMute(bool muted) => throw new InvalidOperationException("Read-only audio fake received a mute command.");
     }
 }
