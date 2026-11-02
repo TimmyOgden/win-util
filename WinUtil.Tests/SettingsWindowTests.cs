@@ -10,12 +10,19 @@ using WinUtil.Views;
 
 namespace WinUtil.Tests;
 
-internal static class SettingsWindowTests
+internal static partial class SettingsWindowTests
 {
     private const int ExpectedTextToolGroupCount = 3;
     private const double StandardDpi = 96;
     private const string ClockWithSeconds = "10:24:36";
     private const string ClockWithoutSeconds = "10:24";
+    private const int SpotlightGeneralPageIndex = 0;
+    private const uint PaletteTestVirtualKey = 0x4B;
+    private static readonly GlobalShortcut TestPalette = new()
+    {
+        Modifiers = GlobalShortcut.ControlModifier | GlobalShortcut.ShiftModifier,
+        VirtualKey = PaletteTestVirtualKey
+    };
 
     internal static void WindowRendersAShortcutEditorForEveryCatalogAction() => RunOnStaThread(() =>
     {
@@ -39,7 +46,9 @@ internal static class SettingsWindowTests
 
             window.UpdateLayout();
 
-            var shortcutTextBoxes = FindDescendants<TextBox>(window).Where(textBox => textBox.Tag is string).ToArray();
+            var shortcutTextBoxes = FindDescendants<TextBox>(window)
+                .Where(textBox => textBox.Tag is string actionId && actionId != ShortcutSettingsViewModel.PaletteSettingId)
+                .ToArray();
             var actionIds = shortcutTextBoxes.Select(textBox => (string)textBox.Tag).Order().ToArray();
             var expectedIds = SpotlightActionCatalog.All.Select(action => action.Id).Order().ToArray();
 
@@ -225,9 +234,12 @@ internal static class SettingsWindowTests
             TestAssert.Equal(Visibility.Collapsed, window.WidgetSettingsPanel.Visibility);
             TestAssert.Equal(-1, window.SpotlightNavigationListBox.SelectedIndex);
             TestAssert.False(window.OpenScreenshotEditorCheckBox.IsChecked == true);
+            TestAssert.True(window.KeepScreenshotHistoryCheckBox.IsChecked == true);
+            window.KeepScreenshotHistoryCheckBox.IsChecked = false;
             window.OpenScreenshotEditorCheckBox.IsChecked = true;
             SaveSettings(window);
             TestAssert.True(store.Load().Settings.OpenScreenshotEditorAfterCapture);
+            TestAssert.False(store.Load().Settings.KeepScreenshotHistory);
         }
         finally
         {
@@ -335,8 +347,10 @@ internal static class SettingsWindowTests
             ExportPreview(window, System.IO.Path.Combine(previewDirectory, "settings-widget.png"));
             window.SettingsNavigationListBox.SelectedIndex = 1;
             ExportPreview(window, System.IO.Path.Combine(previewDirectory, "settings-screenshots.png"));
+            window.SettingsNavigationListBox.SelectedIndex = 2;
+            ExportPreview(window, System.IO.Path.Combine(previewDirectory, "settings-battery.png"));
 
-            foreach (var (pageIndex, pageName) in new[] { (0, "uuid"), (1, "password"), (2, "jwt-secret"), (3, "text-tools") })
+            foreach (var (pageIndex, pageName) in new[] { (0, "spotlight"), (1, "uuid"), (2, "password"), (3, "jwt-secret"), (4, "text-tools") })
             {
                 window.SpotlightNavigationListBox.SelectedIndex = pageIndex;
                 ExportPreview(window, System.IO.Path.Combine(previewDirectory, $"settings-{pageName}.png"));
@@ -346,6 +360,145 @@ internal static class SettingsWindowTests
             window.Width = window.MinWidth;
             window.Height = window.MinHeight;
             ExportPreview(window, System.IO.Path.Combine(previewDirectory, "settings-widget-compact.png"));
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    internal static void PaletteShortcutCanBeCapturedAndSavedFromGeneralSettings() => RunOnStaThread(() =>
+    {
+        EnsureApplicationResources();
+        using var directory = new TemporaryDirectory();
+        var store = new SettingsStore(directory.PathFor("settings.json"));
+        var registrations = new List<SpotlightShortcuts>();
+        Action<ShortcutCaptureResult>? capture = null;
+        var captureEnded = false;
+        var window = new SettingsWindow(store, WidgetSettings.Default, shortcuts =>
+        {
+            registrations.Add(shortcuts);
+            return null;
+        }, callback => capture = callback, () => captureEnded = true, _ => null);
+
+        try
+        {
+            window.Show();
+            window.SpotlightNavigationListBox.SelectedIndex = SpotlightGeneralPageIndex;
+            UpdateBindingsAndLayout(window);
+            TestAssert.Equal(Visibility.Visible, window.SpotlightGeneralSettingsPanel.Visibility);
+            TestAssert.Equal(Visibility.Collapsed, window.WidgetSettingsPanel.Visibility);
+            var input = FindDescendants<TextBox>(window).Single(textBox => Equals(textBox.Tag, ShortcutSettingsViewModel.PaletteSettingId));
+            TestAssert.Equal("Alt+2", input.Text);
+            input.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(
+                System.Windows.Input.Keyboard.PrimaryDevice, Environment.TickCount, null, input)
+            {
+                RoutedEvent = System.Windows.Input.Keyboard.GotKeyboardFocusEvent
+            });
+            TestAssert.True(capture is not null);
+            capture!(ShortcutCaptureResult.Capture(TestPalette));
+            UpdateBindingsAndLayout(window);
+            TestAssert.Equal("Ctrl+Shift+K", input.Text);
+
+            SaveSettings(window);
+
+            TestAssert.Equal(TestPalette, registrations.Single().Palette);
+            TestAssert.Equal(TestPalette, store.Load().Settings.SpotlightShortcuts.Palette);
+            TestAssert.True(captureEnded);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    internal static void PaletteResetRestoresDefaultAndConflictsStayVisible() => RunOnStaThread(() =>
+    {
+        EnsureApplicationResources();
+        using var directory = new TemporaryDirectory();
+        var settingsPath = directory.PathFor("settings.json");
+        var registrations = new List<SpotlightShortcuts>();
+        var window = CreateStartupSettingsWindow(new SettingsStore(settingsPath), _ => null, shortcuts =>
+        {
+            registrations.Add(shortcuts);
+            return null;
+        });
+
+        try
+        {
+            window.Show();
+            window.SpotlightNavigationListBox.SelectedIndex = SpotlightGeneralPageIndex;
+            var viewModel = (ShortcutSettingsViewModel)window.DataContext;
+            viewModel.Palette.Shortcut = TestPalette;
+            UpdateBindingsAndLayout(window);
+            var reset = FindDescendants<Button>(window).Single(button => Equals(button.Tag, ShortcutSettingsViewModel.PaletteSettingId));
+            TestAssert.Equal("Reset", reset.Content);
+            reset.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            TestAssert.Equal(SpotlightShortcuts.DefaultPalette, viewModel.Palette.Shortcut);
+
+            viewModel.Palette.Shortcut = TestPalette;
+            viewModel[SpotlightActionIds.Uuid].Shortcut = TestPalette;
+            SaveSettings(window);
+
+            TestAssert.Equal("Ctrl+Shift+K is reserved for opening Spotlight.", window.ShortcutErrorText.Text);
+            TestAssert.Equal(Visibility.Visible, window.ShortcutErrorText.Visibility);
+            TestAssert.Empty(registrations);
+            TestAssert.True(window.IsVisible);
+            TestAssert.False(File.Exists(settingsPath));
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    internal static void PaletteRegistrationFailureDoesNotPersistSettings() => RunOnStaThread(() =>
+    {
+        EnsureApplicationResources();
+        using var directory = new TemporaryDirectory();
+        var settingsPath = directory.PathFor("settings.json");
+        const string conflictMessage = "Ctrl+Shift+K is already in use by another app.";
+        var window = CreateStartupSettingsWindow(new SettingsStore(settingsPath), _ => null, _ => conflictMessage);
+
+        try
+        {
+            window.Show();
+            ((ShortcutSettingsViewModel)window.DataContext).Palette.Shortcut = TestPalette;
+            SaveSettings(window);
+
+            TestAssert.Equal(conflictMessage, window.ShortcutErrorText.Text);
+            TestAssert.Equal(Visibility.Visible, window.ShortcutErrorText.Visibility);
+            TestAssert.True(window.IsVisible);
+            TestAssert.False(File.Exists(settingsPath));
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    internal static void FailedSettingsSaveRestoresPreviousPaletteShortcut() => RunOnStaThread(() =>
+    {
+        EnsureApplicationResources();
+        using var directory = new TemporaryDirectory();
+        var settingsPath = directory.PathFor("settings.json");
+        Directory.CreateDirectory(settingsPath);
+        var registrations = new List<SpotlightShortcuts>();
+        var window = CreateStartupSettingsWindow(new SettingsStore(settingsPath), _ => null, shortcuts =>
+        {
+            registrations.Add(shortcuts);
+            return null;
+        });
+
+        try
+        {
+            window.Show();
+            ((ShortcutSettingsViewModel)window.DataContext).Palette.Shortcut = TestPalette;
+            SaveSettings(window);
+
+            TestAssert.SequenceEqual(new[] { TestPalette, SpotlightShortcuts.DefaultPalette }, registrations.Select(shortcuts => shortcuts.Palette));
+            TestAssert.Equal(Visibility.Visible, window.StartupErrorText.Visibility);
+            TestAssert.True(window.IsVisible);
         }
         finally
         {
