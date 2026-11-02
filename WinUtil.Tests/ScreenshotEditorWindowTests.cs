@@ -11,7 +11,7 @@ using Point = System.Windows.Point;
 
 namespace WinUtil.Tests;
 
-internal static class ScreenshotEditorWindowTests
+internal static partial class ScreenshotEditorWindowTests
 {
     private const int TestImageWidth = 160;
     private const int TestImageHeight = 100;
@@ -49,7 +49,7 @@ internal static class ScreenshotEditorWindowTests
         }
         finally
         {
-            window.Close();
+            window.CloseAfterConfirmation();
         }
     });
 
@@ -91,7 +91,7 @@ internal static class ScreenshotEditorWindowTests
         }
         finally
         {
-            window.Close();
+            window.CloseAfterConfirmation();
         }
     });
 
@@ -169,7 +169,7 @@ internal static class ScreenshotEditorWindowTests
         }
         finally
         {
-            window.Close();
+            window.CloseAfterConfirmation();
         }
     });
 
@@ -206,7 +206,7 @@ internal static class ScreenshotEditorWindowTests
         }
         finally
         {
-            window.Close();
+            window.CloseAfterConfirmation();
         }
     });
 
@@ -242,7 +242,7 @@ internal static class ScreenshotEditorWindowTests
         }
         finally
         {
-            window.Close();
+            window.CloseAfterConfirmation();
         }
     });
 
@@ -367,7 +367,7 @@ internal static class ScreenshotEditorWindowTests
         }
         finally
         {
-            window.Close();
+            window.CloseAfterConfirmation();
         }
     });
 
@@ -414,7 +414,20 @@ internal static class ScreenshotEditorWindowTests
             TestAssert.Equal(TestImageWidth, decoded.Frames[0].PixelWidth);
             TestAssert.Equal(TestImageHeight, decoded.Frames[0].PixelHeight);
             var normalized = new FormatConvertedBitmap(decoded.Frames[0], PixelFormats.Pbgra32, null, 0);
-            TestAssert.SequenceEqual(Pixels(window.RenderedImage), Pixels(normalized));
+            var expectedPixels = Pixels(window.RenderedImage);
+            var actualPixels = Pixels(normalized);
+            if (!expectedPixels.SequenceEqual(actualPixels))
+            {
+                const int alphaChannelOffset = BytesPerPixel - 1;
+                var mismatch = Enumerable.Range(0, expectedPixels.Length).First(index => expectedPixels[index] != actualPixels[index]);
+                var pixelIndex = mismatch / BytesPerPixel;
+                var pixelOffset = pixelIndex * BytesPerPixel;
+                var nonopaquePixels = Enumerable.Range(0, expectedPixels.Length / BytesPerPixel)
+                    .Count(index => expectedPixels[index * BytesPerPixel + alphaChannelOffset] != byte.MaxValue);
+                var expectedBgra = string.Join(", ", expectedPixels.Skip(pixelOffset).Take(BytesPerPixel));
+                var actualBgra = string.Join(", ", actualPixels.Skip(pixelOffset).Take(BytesPerPixel));
+                throw new InvalidOperationException($"PNG differs at ({pixelIndex % window.RenderedImage.PixelWidth}, {pixelIndex / window.RenderedImage.PixelWidth}): expected BGRA [{expectedBgra}], actual BGRA [{actualBgra}]; rendered pixels with alpha != {byte.MaxValue}: {nonopaquePixels}.");
+            }
             TestAssert.False(Pixels(image).SequenceEqual(Pixels(normalized)));
 
             foreach (var invalidPath in new string?[] { null, "", " " })
@@ -435,7 +448,7 @@ internal static class ScreenshotEditorWindowTests
         }
         finally
         {
-            window.Close();
+            window.CloseAfterConfirmation();
         }
     });
 

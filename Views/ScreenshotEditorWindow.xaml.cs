@@ -60,12 +60,28 @@ public partial class ScreenshotEditorWindow : Window
     private bool isCopying;
     private bool isClosed;
 
-    internal ScreenshotEditorWindow(BitmapSource image, ScreenshotEditorOptions? options = null)
+    internal ScreenshotEditorWindow(
+        BitmapSource image,
+        ScreenshotEditorOptions? options = null,
+        Func<ScreenshotCloseChoice>? promptClose = null,
+        Func<string?>? selectSavePath = null,
+        Action<BitmapSource>? copyImage = null,
+        Action<BitmapSource>? openImageEditor = null,
+        Func<string?>? selectOpenPath = null,
+        Func<BitmapSource?>? readClipboardImage = null,
+        Action? showHistory = null)
     {
         document = new ScreenshotDocument(image);
+        exportedState = document.State;
+        this.promptClose = promptClose ?? PromptClose;
+        this.selectSavePath = selectSavePath ?? SelectSavePath;
+        this.copyImage = copyImage ?? Clipboard.SetImage;
         InitialOptions = (options ?? new ScreenshotEditorOptions()).Normalize();
         Options = InitialOptions;
         InitializeComponent();
+        this.showHistory = showHistory;
+        HistoryButton.IsEnabled = showHistory is not null;
+        InitializeImageImport(openImageEditor, selectOpenPath, readClipboardImage);
         AnnotationTextBox.MaxLength = ScreenshotDocument.MaximumTextLength;
         PopulateOptions();
         ImageSurface.Width = document.Width;
@@ -77,9 +93,17 @@ public partial class ScreenshotEditorWindow : Window
         RefreshImage();
         SetStatus(DefaultInstruction);
         Closed += (_, _) => isClosed = true;
+        AnnotationTextBox.TextChanged += (_, _) => UpdateUnsavedTitle();
+        ImageViewbox.SizeChanged += (_, _) => DrawSelection();
     }
 
     internal ScreenshotEditorOptions Options { get; private set; }
+
+    private readonly Action? showHistory;
+
+    internal event Action<BitmapSource>? ImageExported;
+
+    private void HandleShowHistory(object sender, RoutedEventArgs e) => showHistory?.Invoke();
 
     internal ScreenshotEditorOptions InitialOptions { get; }
 
@@ -89,11 +113,15 @@ public partial class ScreenshotEditorWindow : Window
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         FinishTextEntry(commit: true);
+        CancelDrag();
+        var snapshot = document.State;
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(RenderedImage));
         using var stream = new MemoryStream();
         encoder.Save(stream);
         File.WriteAllBytes(filePath, stream.ToArray());
+        MarkExported(snapshot);
+        ImageExported?.Invoke(RenderedImage);
     }
 
     internal void CommitAnnotation(Point start, Point end)
@@ -129,7 +157,7 @@ public partial class ScreenshotEditorWindow : Window
             Options.StrokeWidth,
             AnnotationTextBox.Text,
             Options.FontSize,
-            Options.BlurRadius));
+            Options.BlurRadius) { LocalToSource = document.OutputToSource });
         RefreshImage();
         SetStatus(selectedTool == ScreenshotAnnotationKind.Blur
             ? "Area blurred. Copy or save to export the edited image."
@@ -145,11 +173,17 @@ public partial class ScreenshotEditorWindow : Window
 
         TextTool.IsChecked = true;
         FinishTextEntry(commit: true);
+        editingAnnotationIndex = null;
         var anchor = new Point(
             Math.Clamp(point.X, 0, document.Width - LastPixelOffset),
             Math.Clamp(point.Y, 0, document.Height - LastPixelOffset));
+        OpenTextEntry(anchor, string.Empty);
+    }
+
+    private void OpenTextEntry(Point anchor, string text)
+    {
         textAnchor = anchor;
-        AnnotationTextBox.Text = string.Empty;
+        AnnotationTextBox.Text = text;
         AnnotationTextBox.Width = Math.Max(LastPixelOffset, Math.Min(TextEditorMaximumWidth, document.Width - anchor.X) - TextEditorPadding);
         AnnotationTextBox.MaxHeight = Math.Max(LastPixelOffset, Math.Min(TextEditorMaximumHeight, document.Height - anchor.Y) - TextEditorPadding);
         UpdateTextEntryStyle();
@@ -170,12 +204,32 @@ public partial class ScreenshotEditorWindow : Window
         textAnchor = null;
         TextInputPanel.Visibility = Visibility.Collapsed;
 
-        if (commit && !string.IsNullOrWhiteSpace(AnnotationTextBox.Text))
+        if (commit)
         {
-            CommitAnnotation(anchor, anchor);
+            if (editingAnnotationIndex is int index)
+            {
+                if (string.IsNullOrWhiteSpace(AnnotationTextBox.Text))
+                {
+                    document.Remove(index);
+                    selectedAnnotationIndex = null;
+                    UpdateToolOptions();
+                }
+                else
+                {
+                    document.Replace(index, CreateTextAnnotation(anchor));
+                }
+
+                RefreshImage();
+            }
+            else if (!string.IsNullOrWhiteSpace(AnnotationTextBox.Text))
+            {
+                CommitAnnotation(anchor, anchor);
+            }
         }
 
+        editingAnnotationIndex = null;
         AnnotationTextBox.Text = string.Empty;
+        UpdateUnsavedTitle();
     }
 
     private void UpdateTextEntryStyle()
@@ -260,6 +314,7 @@ public partial class ScreenshotEditorWindow : Window
             BlurRadius = (double)BlurComboBox.SelectedValue
         }.Normalize();
         UpdateTextEntryStyle();
+        ApplySelectedOptions();
     }
 
     private void HandleToolChecked(object sender, RoutedEventArgs e)
@@ -271,12 +326,33 @@ public partial class ScreenshotEditorWindow : Window
 
         FinishTextEntry(commit: true);
         CancelDrag();
+        CancelCropSelection();
+        isCropping = toolName == "Crop";
+        isSelecting = toolName == "Select";
+        selectedAnnotationIndex = null;
+
+        if (isCropping)
+        {
+            UpdateToolOptions();
+            AnnotationCanvas.Cursor = Cursors.Cross;
+            SetStatus("Drag to select a crop area, then choose Apply crop. Escape cancels.");
+            AnnotationCanvas.Focus();
+            return;
+        }
+
+        if (isSelecting)
+        {
+            UpdateToolOptions();
+            DrawSelection();
+            AnnotationCanvas.Cursor = Cursors.Arrow;
+            SetStatus("Select an annotation to move, resize or delete it. Double-click text to edit.");
+            AnnotationCanvas.Focus();
+            return;
+        }
+
         selectedTool = Enum.Parse<ScreenshotAnnotationKind>(toolName);
-        ColorOptionPanel.Visibility = selectedTool == ScreenshotAnnotationKind.Blur ? Visibility.Collapsed : Visibility.Visible;
-        StrokeOptionPanel.Visibility = selectedTool is ScreenshotAnnotationKind.Text or ScreenshotAnnotationKind.Blur ? Visibility.Collapsed : Visibility.Visible;
-        FontSizeOptionPanel.Visibility = selectedTool == ScreenshotAnnotationKind.Text ? Visibility.Visible : Visibility.Collapsed;
-        BlurOptionPanel.Visibility = selectedTool == ScreenshotAnnotationKind.Blur ? Visibility.Visible : Visibility.Collapsed;
-        ActiveToolText.Text = selectedTool == ScreenshotAnnotationKind.Blur ? "Blur area" : toolName;
+        UpdateToolOptions();
+        DrawSelection();
         AnnotationCanvas.Cursor = selectedTool == ScreenshotAnnotationKind.Text ? Cursors.IBeam : Cursors.Cross;
         SetStatus(selectedTool switch
         {
@@ -294,7 +370,24 @@ public partial class ScreenshotEditorWindow : Window
     {
         AnnotationCanvas.Focus();
 
-        if (selectedTool == ScreenshotAnnotationKind.Text)
+        if (isCropping)
+        {
+            BeginCropSelection(e.GetPosition(AnnotationCanvas));
+            AnnotationCanvas.CaptureMouse();
+        }
+        else if (isSelecting)
+        {
+            if (e.ClickCount == 2)
+            {
+                SelectAnnotationAt(e.GetPosition(AnnotationCanvas));
+                BeginSelectedTextEdit();
+            }
+            else if (BeginSelectionDrag(e.GetPosition(AnnotationCanvas)))
+            {
+                AnnotationCanvas.CaptureMouse();
+            }
+        }
+        else if (selectedTool == ScreenshotAnnotationKind.Text)
         {
             BeginTextEntry(e.GetPosition(AnnotationCanvas));
         }
@@ -356,6 +449,34 @@ public partial class ScreenshotEditorWindow : Window
 
     private void HandleCanvasMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
+        if (cropDragStart is not null)
+        {
+            if (e.LeftButton == MouseButtonState.Pressed)
+            {
+                PreviewCropSelection(e.GetPosition(AnnotationCanvas));
+            }
+            else
+            {
+                CancelCropSelection();
+            }
+
+            return;
+        }
+
+        if (selectionDragStart is not null)
+        {
+            if (e.LeftButton == MouseButtonState.Pressed)
+            {
+                PreviewSelectionDrag(e.GetPosition(AnnotationCanvas));
+            }
+            else
+            {
+                CancelDrag();
+            }
+
+            return;
+        }
+
         if (dragStart is not Point start)
         {
             return;
@@ -372,6 +493,20 @@ public partial class ScreenshotEditorWindow : Window
 
     private void HandleCanvasMouseUp(object sender, MouseButtonEventArgs e)
     {
+        if (cropDragStart is not null)
+        {
+            CompleteCropSelection(e.GetPosition(AnnotationCanvas));
+            e.Handled = true;
+            return;
+        }
+
+        if (selectionDragStart is not null)
+        {
+            CompleteSelectionDrag(e.GetPosition(AnnotationCanvas));
+            e.Handled = true;
+            return;
+        }
+
         if (dragStart is not Point start)
         {
             return;
@@ -383,17 +518,37 @@ public partial class ScreenshotEditorWindow : Window
         e.Handled = true;
     }
 
-    private void HandleLostMouseCapture(object sender, System.Windows.Input.MouseEventArgs e) => CancelDrag();
+    private void HandleLostMouseCapture(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (cropDragStart is not null)
+        {
+            CancelCropSelection();
+        }
+
+        CancelDrag();
+        DrawCropSelection();
+    }
 
     private void CancelDrag()
     {
+        var hadSelectionPreview = selectionDragStart is not null;
+        selectionDragStart = null;
+        selectionDragOriginal = null;
+        selectionDragPreview = null;
         dragStart = null;
         AnnotationCanvas.Children.Clear();
+
+        if (hadSelectionPreview)
+        {
+            ScreenshotImage.Source = document.Render();
+        }
 
         if (AnnotationCanvas.IsMouseCaptured)
         {
             AnnotationCanvas.ReleaseMouseCapture();
         }
+
+        DrawSelection();
     }
 
     private void DrawPreview(Point start, Point end)
@@ -457,32 +612,45 @@ public partial class ScreenshotEditorWindow : Window
 
     private void RefreshImage()
     {
+        ImageSurface.Width = document.Width;
+        ImageSurface.Height = document.Height;
+        AnnotationCanvas.Width = document.Width;
+        AnnotationCanvas.Height = document.Height;
+        ImageDetailsText.Text = $"{document.Width:N0} × {document.Height:N0} px";
         ScreenshotImage.Source = document.Render();
         UndoButton.IsEnabled = document.CanUndo;
         RedoButton.IsEnabled = document.CanRedo;
+        DrawSelection();
+        UpdateUnsavedTitle();
     }
 
     private void HandleUndo(object sender, RoutedEventArgs e)
     {
         FinishTextEntry(commit: true);
         CancelDrag();
+        CancelCropSelection();
         document.Undo();
+        selectedAnnotationIndex = null;
+        UpdateToolOptions();
         RefreshImage();
-        SetStatus("Annotation undone.");
+        SetStatus("Change undone.");
     }
 
     private void HandleRedo(object sender, RoutedEventArgs e)
     {
         FinishTextEntry(commit: true);
         CancelDrag();
+        CancelCropSelection();
         document.Redo();
+        selectedAnnotationIndex = null;
+        UpdateToolOptions();
         RefreshImage();
-        SetStatus("Annotation restored.");
+        SetStatus("Change restored.");
     }
 
     private async void HandleCopy(object sender, RoutedEventArgs e) => await CopyImageAsync();
 
-    private async Task CopyImageAsync()
+    internal async Task CopyImageAsync()
     {
         if (isCopying)
         {
@@ -497,6 +665,7 @@ public partial class ScreenshotEditorWindow : Window
         try
         {
             var image = RenderedImage;
+            var snapshot = document.State;
 
             for (var attempt = 0; attempt < ClipboardAttempts; attempt++)
             {
@@ -507,7 +676,9 @@ public partial class ScreenshotEditorWindow : Window
 
                 try
                 {
-                    Clipboard.SetImage(image);
+                    copyImage(image);
+                    MarkExported(snapshot);
+                    ImageExported?.Invoke(image);
                     SetStatus("Edited image copied to the clipboard.");
                     return;
                 }
@@ -528,38 +699,30 @@ public partial class ScreenshotEditorWindow : Window
         }
     }
 
-    private void HandleSave(object sender, RoutedEventArgs e)
-    {
-        FinishTextEntry(commit: true);
-        CancelDrag();
-        var dialog = new SaveFileDialog
-        {
-            Title = "Save edited screenshot",
-            Filter = "PNG image (*.png)|*.png",
-            DefaultExt = ".png",
-            AddExtension = true,
-            OverwritePrompt = true,
-            FileName = $"Screenshot-{DateTime.Now:yyyyMMdd-HHmmss}.png"
-        };
-
-        if (dialog.ShowDialog(this) != true)
-        {
-            return;
-        }
-
-        try
-        {
-            SavePng(dialog.FileName);
-            SetStatus($"Saved {Path.GetFileName(dialog.FileName)}.");
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ExternalException or NotSupportedException)
-        {
-            SetStatus($"Could not save the image. Choose another location and try again. {exception.Message}", isError: true);
-        }
-    }
+    private void HandleSave(object sender, RoutedEventArgs e) => TrySaveImage();
 
     private async void HandlePreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
+        if (HandleImageImportKey(e.Key, Keyboard.Modifiers))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Escape && isCropping)
+        {
+            CancelCropMode();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Enter && isCropping && Keyboard.FocusedElement is not TextBoxBase)
+        {
+            ApplyCropSelection();
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.Escape && textAnchor is not null)
         {
             FinishTextEntry(commit: false);
@@ -569,7 +732,7 @@ public partial class ScreenshotEditorWindow : Window
             return;
         }
 
-        if (e.Key == Key.Escape && dragStart is not null)
+        if (e.Key == Key.Escape && (dragStart is not null || selectionDragStart is not null))
         {
             CancelDrag();
             e.Handled = true;
@@ -578,13 +741,29 @@ public partial class ScreenshotEditorWindow : Window
 
         if (Keyboard.Modifiers == ModifierKeys.None && Keyboard.FocusedElement is not TextBoxBase and not ComboBox)
         {
+            if (isSelecting && e.Key == Key.Delete)
+            {
+                DeleteSelectedAnnotation();
+                e.Handled = true;
+                return;
+            }
+
+            if (isSelecting && e.Key == Key.Enter)
+            {
+                BeginSelectedTextEdit();
+                e.Handled = true;
+                return;
+            }
+
             var tool = e.Key switch
             {
+                Key.V => SelectTool,
                 Key.A => ArrowTool,
                 Key.R => RectangleTool,
                 Key.E => EllipseTool,
                 Key.T => TextTool,
                 Key.B => BlurTool,
+                Key.C => CropTool,
                 _ => null
             };
 
@@ -622,6 +801,28 @@ public partial class ScreenshotEditorWindow : Window
         }
 
         e.Handled = true;
+    }
+
+    internal bool HandleImageImportKey(Key key, ModifierKeys modifiers)
+    {
+        if (modifiers != ModifierKeys.Control)
+        {
+            return false;
+        }
+
+        if (key == Key.O)
+        {
+            OpenImage();
+            return true;
+        }
+
+        if (key == Key.V && Keyboard.FocusedElement is not TextBoxBase)
+        {
+            PasteImage();
+            return true;
+        }
+
+        return false;
     }
 
     private void SetStatus(string text, bool isError = false)
