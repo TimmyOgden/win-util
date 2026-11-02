@@ -17,4 +17,14 @@ internal static class BatterySnapshotTests
 
         TestAssert.True(snapshot.HasDevices);
     }
+
+    internal static void ErrorMessageCombinesOnlyNonemptyProviderErrors()
+    {
+        TestAssert.Equal<string?>(null, new BatterySnapshot([], null).ErrorMessage);
+        TestAssert.Equal<string?>(null, new BatterySnapshot([], " ", "").ErrorMessage);
+        TestAssert.Equal("Bluetooth unavailable", new BatterySnapshot([], "Bluetooth unavailable").ErrorMessage);
+        TestAssert.Equal("System unavailable", new BatterySnapshot([], null, "System unavailable").ErrorMessage);
+        TestAssert.Equal("System unavailable" + Environment.NewLine + "Bluetooth unavailable",
+            new BatterySnapshot([], "Bluetooth unavailable", "System unavailable").ErrorMessage);
+    }
 }
