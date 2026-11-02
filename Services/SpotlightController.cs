@@ -31,7 +31,7 @@ internal sealed class SpotlightController : IDisposable
     {
         if (spotlightWindow.IsVisible)
         {
-            spotlightWindow.Hide();
+            spotlightWindow.ClosePalette();
             return;
         }
 
@@ -58,6 +58,7 @@ internal sealed class SpotlightController : IDisposable
         }
 
         isActionRunning = true;
+        var completed = false;
 
         try
         {
@@ -69,6 +70,8 @@ internal sealed class SpotlightController : IDisposable
             {
                 textInjector.InsertText(insertionTarget, action.GenerateOutput());
             }
+
+            completed = true;
         }
         catch (Exception exception) when (exception is ArgumentException or ExternalException or InvalidOperationException or JsonException or TextTransformationException)
         {
@@ -78,11 +81,16 @@ internal sealed class SpotlightController : IDisposable
         {
             isActionRunning = false;
         }
+
+        if (completed)
+        {
+            spotlightWindow.RecordSuccessfulAction(action.Id);
+        }
     }
 
     private static string CreateInsertionFailureMessage(Exception exception) => exception switch
     {
-        SelectedTextUnavailableException => "Select JSON in the original app before opening Spotlight.",
+        SelectedTextUnavailableException => "Select text in the original app before running this tool.",
         JsonException => "The selected text is not valid JSON, so nothing was replaced.",
         TextTransformationException => exception.Message,
         ArgumentException => "The original app is no longer available. Return to it and try again.",

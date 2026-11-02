@@ -6,12 +6,13 @@ namespace WinUtil.Tests;
 
 internal static class SpotlightViewModelTests
 {
-    internal static void InitialStateHidesActionsUntilAQueryIsEntered()
+    internal static void InitialStateShowsAllActionsWithoutSuggestions()
     {
         var viewModel = new SpotlightViewModel(SpotlightActionCatalog.All);
 
-        TestAssert.Empty(viewModel.MatchingActions);
-        TestAssert.Equal<SpotlightAction?>(null, viewModel.SelectedAction);
+        TestAssert.SequenceEqual(SpotlightActionCatalog.All.Select(action => action.Id), viewModel.MatchingActions.Select(action => action.Id));
+        TestAssert.Equal(SpotlightActionIds.Uuid, viewModel.SelectedAction?.Id);
+        TestAssert.Equal("All commands", viewModel.ResultsLabel);
     }
 
     internal static void QueryRetainsTheSelectionWhenItStillMatches()
@@ -24,7 +25,7 @@ internal static class SpotlightViewModelTests
         TestAssert.Equal("password", viewModel.SelectedAction?.Id);
     }
 
-    internal static void ResetClearsTheQueryAndHidesActions()
+    internal static void ResetClearsTheQueryAndShowsAvailableActions()
     {
         var viewModel = new SpotlightViewModel(SpotlightActionCatalog.All)
         {
@@ -34,8 +35,8 @@ internal static class SpotlightViewModelTests
         viewModel.Reset();
 
         TestAssert.Equal(string.Empty, viewModel.Query);
-        TestAssert.Empty(viewModel.MatchingActions);
-        TestAssert.Equal<SpotlightAction?>(null, viewModel.SelectedAction);
+        TestAssert.SequenceEqual(SpotlightActionCatalog.All.Select(action => action.Id), viewModel.MatchingActions.Select(action => action.Id));
+        TestAssert.Equal(SpotlightActionIds.Uuid, viewModel.SelectedAction?.Id);
     }
 
     internal static void ChangingTheQueryClearsAnInsertionError()

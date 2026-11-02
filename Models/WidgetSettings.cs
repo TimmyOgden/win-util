@@ -58,6 +58,8 @@ internal sealed record WidgetSettings
 
     public SpotlightShortcuts SpotlightShortcuts { get; init; } = new();
 
+    public SpotlightPreferences SpotlightPreferences { get; init; } = new();
+
     public UuidVersion UuidVersion { get; init; } = UuidVersion.Version4;
 
     internal WidgetSettings Normalize()
@@ -90,6 +92,7 @@ internal sealed record WidgetSettings
             ScreenshotEditor = (ScreenshotEditor ?? new ScreenshotEditorOptions()).Normalize(),
             BatteryAlerts = (BatteryAlerts ?? new BatteryAlertSettings()).Normalize(),
             SpotlightShortcuts = (SpotlightShortcuts ?? new SpotlightShortcuts()).Normalize(),
+            SpotlightPreferences = (SpotlightPreferences ?? new SpotlightPreferences()).Normalize(),
             Top = NormalizePosition(Top),
             UuidVersion = Enum.IsDefined(UuidVersion) ? UuidVersion : Default.UuidVersion
         };

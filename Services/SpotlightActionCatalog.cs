@@ -90,13 +90,7 @@ internal static class SpotlightActionCatalog
     internal static IReadOnlyList<SpotlightAction> Filter(string query) => Filter(All, query);
 
     internal static IReadOnlyList<SpotlightAction> Filter(IReadOnlyList<SpotlightAction> actions, string query)
-    {
-        var normalizedQuery = query.Trim();
-
-        return string.IsNullOrWhiteSpace(normalizedQuery)
-            ? actions
-            : actions.Where(action => action.Matches(normalizedQuery)).ToArray();
-    }
+        => SpotlightSearch.Rank(actions, query);
 
     private static string GenerateUuid(UuidVersion uuidVersion) => uuidVersion switch
     {

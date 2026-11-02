@@ -5,7 +5,7 @@
         Title="WinUtil command palette"
         Width="620"
         MinHeight="88"
-        MaxHeight="480"
+        MaxHeight="680"
         AllowsTransparency="True"
         Background="Transparent"
         Foreground="{StaticResource TextPrimaryBrush}"
@@ -21,11 +21,26 @@
         WindowStartupLocation="CenterScreen"
         WindowStyle="None"
         Deactivated="HandleDeactivated"
+        SizeChanged="HandleWindowSizeChanged"
         PreviewKeyDown="HandlePreviewKeyDown">
   <Window.Resources>
     <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
     <sys:Double x:Key="ActionResultsMaximumHeight">288</sys:Double>
     <sys:Double x:Key="SearchRowHeight">54</sys:Double>
+    <sys:Double x:Key="WorkspaceEditorHeight">120</sys:Double>
+    <Style x:Key="WorkspaceTextBox" TargetType="TextBox">
+      <Setter Property="Padding" Value="10,8" />
+      <Setter Property="Background" Value="{StaticResource CanvasBrush}" />
+      <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+      <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+      <Setter Property="CaretBrush" Value="{StaticResource AccentBrush}" />
+      <Setter Property="SelectionBrush" Value="{StaticResource AccentMutedBrush}" />
+      <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+      <Setter Property="AcceptsReturn" Value="True" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+      <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
+    </Style>
     <Style x:Key="CommandResultItem" TargetType="ListBoxItem">
       <Setter Property="Padding" Value="12,8" />
       <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -96,7 +111,8 @@
           CornerRadius="{StaticResource CardCornerRadius}"
           Effect="{StaticResource ElevatedShadow}"
           SnapsToDevicePixels="True">
-    <StackPanel>
+    <Grid>
+    <StackPanel x:Name="PalettePanel" Visibility="{Binding IsPaletteOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
       <Border Height="{StaticResource SearchRowHeight}" Padding="16,0">
         <Grid>
           <Grid.ColumnDefinitions>
@@ -139,9 +155,18 @@
               </TextBlock.Style>
             </TextBlock>
           </Grid>
-          <Border Grid.Column="2" Margin="12,0,0,0" Style="{StaticResource KeyHint}" ToolTip="Escape closes Spotlight">
-            <TextBlock Style="{StaticResource KeyHintText}" Text="Esc" />
-          </Border>
+          <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="12,0,0,0">
+            <Button x:Name="WorkspaceButton"
+                    Margin="0,0,12,0"
+                    VerticalAlignment="Center"
+                    Style="{StaticResource CompactSecondaryButton}"
+                    Content="Workspace"
+                    Click="HandleOpenWorkspace"
+                    ToolTip="Run tools with your own input and copy the result" />
+            <Border Style="{StaticResource KeyHint}" ToolTip="Escape closes Spotlight">
+              <TextBlock Style="{StaticResource KeyHintText}" Text="Esc" />
+            </Border>
+          </StackPanel>
         </Grid>
       </Border>
       <Border Margin="16,0,16,8"
@@ -152,7 +177,7 @@
               Visibility="{Binding HasError, Converter={StaticResource BooleanToVisibilityConverter}}">
         <TextBlock Style="{StaticResource ErrorText}" Text="{Binding ErrorMessage}" />
       </Border>
-      <Grid Visibility="{Binding HasQuery, Converter={StaticResource BooleanToVisibilityConverter}}">
+      <Grid>
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto" />
           <RowDefinition Height="Auto" />
@@ -161,7 +186,13 @@
                 BorderBrush="{StaticResource DividerBrush}"
                 BorderThickness="0,1,0,0">
           <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock Margin="12,4,12,8" Style="{StaticResource CaptionText}" Text="{Binding ResultsLabel}" />
             <ListBox x:Name="ActionResultsListBox"
+                     Grid.Row="1"
                      MaxHeight="{StaticResource ActionResultsMaximumHeight}"
                      Padding="0"
                      Background="Transparent"
@@ -183,6 +214,7 @@
                       <ColumnDefinition Width="Auto" />
                       <ColumnDefinition Width="*" />
                       <ColumnDefinition Width="Auto" />
+                      <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Style="{StaticResource ActionGlyph}" ToolTip="{Binding Category}" />
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
@@ -196,7 +228,23 @@
                                  TextTrimming="CharacterEllipsis"
                                  TextWrapping="NoWrap" />
                     </StackPanel>
-                    <Border Grid.Column="2" Margin="12,0,0,0" Style="{StaticResource KeyHint}">
+                    <Button Grid.Column="2" Margin="12,0,0,0" Tag="{Binding Id}" Click="HandleToggleFavorite"
+                            AutomationProperties.Name="{Binding Title, StringFormat='Favorite {0}'}">
+                      <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource CompactSecondaryButton}">
+                          <Setter Property="Content" Value="Favorite" />
+                          <Setter Property="ToolTip" Value="Add to favorites" />
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsFavorite}" Value="True">
+                              <Setter Property="Content" Value="Unfavorite" />
+                              <Setter Property="ToolTip" Value="Remove from favorites" />
+                              <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </Button.Style>
+                    </Button>
+                    <Border Grid.Column="3" Margin="12,0,0,0" Style="{StaticResource KeyHint}">
                       <Border.Visibility>
                         <Binding Path="IsSelected"
                                  RelativeSource="{RelativeSource AncestorType=ListBoxItem}"
@@ -208,7 +256,7 @@
                 </DataTemplate>
               </ListBox.ItemTemplate>
             </ListBox>
-            <StackPanel x:Name="NoResultsPanel" HorizontalAlignment="Center" Margin="0,20">
+            <StackPanel x:Name="NoResultsPanel" Grid.Row="1" HorizontalAlignment="Center" Margin="0,20">
               <StackPanel.Style>
                 <Style TargetType="StackPanel">
                   <Setter Property="Visibility" Value="Collapsed" />
@@ -246,5 +294,66 @@
         </Border>
       </Grid>
     </StackPanel>
+    <ScrollViewer x:Name="WorkspacePanel"
+                  MaxHeight="620"
+                  HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Auto"
+                  Visibility="{Binding IsWorkspaceOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+      <StackPanel Margin="16" DataContext="{Binding Workspace}">
+        <Grid Margin="0,0,0,16">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock VerticalAlignment="Center" Style="{StaticResource TitleText}" Text="Tool workspace" />
+          <Button x:Name="BackToPaletteButton" Grid.Column="1" Margin="12,0,0,0"
+                  Style="{StaticResource CompactSecondaryButton}" Content="Commands" Click="HandleCloseWorkspace"
+                  ToolTip="Return to commands and clear the workspace" />
+          <Button x:Name="CloseWorkspaceButton" Grid.Column="2" Margin="8,0,0,0"
+                  Style="{StaticResource CompactSecondaryButton}" Content="Close" Click="HandleClosePalette"
+                  ToolTip="Close Spotlight and clear the workspace (Esc)" />
+        </Grid>
+        <Label Padding="0,0,0,4" Foreground="{StaticResource TextSecondaryBrush}" Target="{Binding ElementName=WorkspaceToolComboBox}" Content="Tool" />
+        <ComboBox x:Name="WorkspaceToolComboBox"
+                  Style="{StaticResource SettingsComboBox}"
+                  ItemsSource="{Binding Tools}"
+                  DisplayMemberPath="Title"
+                  SelectedItem="{Binding SelectedTool, Mode=TwoWay}"
+                  AutomationProperties.Name="Workspace tool" />
+        <StackPanel x:Name="WorkspaceInputPanel" Margin="0,12,0,0"
+                    Visibility="{Binding RequiresInput, Converter={StaticResource BooleanToVisibilityConverter}}">
+          <Label Padding="0,0,0,4" Foreground="{StaticResource TextSecondaryBrush}" Target="{Binding ElementName=WorkspaceInputTextBox}" Content="Input" />
+          <TextBox x:Name="WorkspaceInputTextBox"
+                   Height="{StaticResource WorkspaceEditorHeight}"
+                   Style="{StaticResource WorkspaceTextBox}"
+                   Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
+                   AutomationProperties.Name="Workspace input" />
+        </StackPanel>
+        <Grid Margin="0,12,0,12">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <Button x:Name="WorkspaceRunButton" Style="{StaticResource PrimaryButton}" Content="{Binding RunLabel}"
+                  IsEnabled="{Binding CanRun}" Click="HandleRunWorkspace" ToolTip="Run the selected tool (Ctrl+Enter)" />
+          <TextBlock Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Style="{StaticResource CaptionText}" Text="Ctrl+Enter to run" />
+          <Button x:Name="WorkspaceCopyButton" Grid.Column="2" Style="{StaticResource SecondaryButton}" Content="Copy result"
+                  IsEnabled="{Binding CanCopy}" Click="HandleCopyWorkspace" />
+        </Grid>
+        <Border Margin="0,0,0,12" Padding="10,8" Background="{StaticResource SurfaceRaisedBrush}"
+                BorderBrush="{StaticResource ErrorBrush}" BorderThickness="2,0,0,0"
+                Visibility="{Binding HasError, Converter={StaticResource BooleanToVisibilityConverter}}">
+          <TextBlock Style="{StaticResource ErrorText}" Text="{Binding ErrorMessage}" AutomationProperties.LiveSetting="Polite" />
+        </Border>
+        <Label Padding="0,0,0,4" Foreground="{StaticResource TextSecondaryBrush}" Target="{Binding ElementName=WorkspaceOutputTextBox}" Content="Output" />
+        <TextBox x:Name="WorkspaceOutputTextBox" Height="{StaticResource WorkspaceEditorHeight}"
+                 Style="{StaticResource WorkspaceTextBox}" IsReadOnly="True" IsUndoEnabled="False"
+                 Text="{Binding OutputText, Mode=OneWay}" AutomationProperties.Name="Workspace output" />
+        <TextBlock Margin="0,8,0,0" Style="{StaticResource CaptionText}" Text="{Binding StatusMessage}" AutomationProperties.LiveSetting="Polite" />
+      </StackPanel>
+    </ScrollViewer>
+    </Grid>
   </Border>
 </Window>
