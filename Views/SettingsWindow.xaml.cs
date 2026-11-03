@@ -14,12 +14,14 @@ public partial class SettingsWindow : Window
     private const int JwtSecret256BitOptionIndex = 0;
     private const int JwtSecret384BitOptionIndex = 1;
     private const int JwtSecret512BitOptionIndex = 2;
-    private const int UuidSettingsPageIndex = 0;
-    private const int PasswordSettingsPageIndex = 1;
-    private const int JwtSecretSettingsPageIndex = 2;
-    private const int TextToolsSettingsPageIndex = 3;
+    private const int SpotlightGeneralSettingsPageIndex = 0;
+    private const int UuidSettingsPageIndex = 1;
+    private const int PasswordSettingsPageIndex = 2;
+    private const int JwtSecretSettingsPageIndex = 3;
+    private const int TextToolsSettingsPageIndex = 4;
     private const int WidgetSettingsPageIndex = 0;
     private const int ScreenshotSettingsPageIndex = 1;
+    private const int BatterySettingsPageIndex = 2;
 
     private readonly WidgetSettings initialSettings;
     private readonly SettingsStore settingsStore;
@@ -29,7 +31,9 @@ public partial class SettingsWindow : Window
     private readonly Func<SpotlightShortcuts, string?> tryApplySpotlightShortcuts;
     private readonly Func<bool, string?> tryApplyStartup;
     private readonly Func<ScreenshotEditorOptions> getScreenshotEditorOptions;
+    private readonly Func<SpotlightPreferences> getSpotlightPreferences;
     private bool isChangingSettingsPage;
+    private bool clearSpotlightHistory;
 
     internal SettingsWindow(
         SettingsStore settingsStore,
@@ -38,7 +42,8 @@ public partial class SettingsWindow : Window
         Action<Action<ShortcutCaptureResult>> beginShortcutCapture,
         Action endShortcutCapture,
         Func<bool, string?> tryApplyStartup,
-        Func<ScreenshotEditorOptions>? getScreenshotEditorOptions = null)
+        Func<ScreenshotEditorOptions>? getScreenshotEditorOptions = null,
+        Func<SpotlightPreferences>? getSpotlightPreferences = null)
     {
         initialSettings = settings;
         this.settingsStore = settingsStore;
@@ -47,6 +52,7 @@ public partial class SettingsWindow : Window
         this.endShortcutCapture = endShortcutCapture;
         this.tryApplyStartup = tryApplyStartup;
         this.getScreenshotEditorOptions = getScreenshotEditorOptions ?? (() => settings.ScreenshotEditor);
+        this.getSpotlightPreferences = getSpotlightPreferences ?? (() => settings.SpotlightPreferences);
         shortcutSettings = new ShortcutSettingsViewModel(SpotlightActionCatalog.All, settings.SpotlightShortcuts);
         DataContext = shortcutSettings;
         InitializeComponent();
@@ -54,6 +60,12 @@ public partial class SettingsWindow : Window
         KeepOnTopCheckBox.IsChecked = settings.KeepOnTop;
         RunAtStartupCheckBox.IsChecked = settings.RunAtStartup;
         OpenScreenshotEditorCheckBox.IsChecked = settings.OpenScreenshotEditorAfterCapture;
+        KeepScreenshotHistoryCheckBox.IsChecked = settings.KeepScreenshotHistory;
+        BatteryAlertsEnabledCheckBox.IsChecked = settings.BatteryAlerts.Enabled;
+        BatteryAlertThresholdSlider.Minimum = BatteryAlertSettings.MinimumThresholdPercent;
+        BatteryAlertThresholdSlider.Maximum = BatteryAlertSettings.MaximumThresholdPercent;
+        BatteryAlertThresholdSlider.Value = settings.BatteryAlerts.ThresholdPercent;
+        RememberRecentCommandsCheckBox.IsChecked = settings.SpotlightPreferences.RememberRecentCommands;
         ShowSecondsCheckBox.IsChecked = settings.ShowSeconds;
         AutoHideDelayComboBox.SelectedIndex = settings.AutoHideDelaySeconds == WidgetSettings.ShortAutoHideDelaySeconds
             ? 0
@@ -74,6 +86,7 @@ public partial class SettingsWindow : Window
             _ => JwtSecret256BitOptionIndex
         };
         SettingsNavigationListBox.SelectedIndex = 0;
+        Closed += (_, _) => endShortcutCapture();
     }
 
     internal event Action<WidgetSettings>? SettingsSaved;
@@ -127,6 +140,7 @@ public partial class SettingsWindow : Window
 
         ShowSettingsPage(SpotlightNavigationListBox.SelectedIndex switch
         {
+            SpotlightGeneralSettingsPageIndex => SettingsPage.SpotlightGeneral,
             UuidSettingsPageIndex => SettingsPage.Uuid,
             PasswordSettingsPageIndex => SettingsPage.Password,
             JwtSecretSettingsPageIndex => SettingsPage.JwtSecret,
@@ -146,6 +160,7 @@ public partial class SettingsWindow : Window
         {
             WidgetSettingsPageIndex => SettingsPage.Widget,
             ScreenshotSettingsPageIndex => SettingsPage.Screenshots,
+            BatterySettingsPageIndex => SettingsPage.Battery,
             _ => throw new ArgumentOutOfRangeException(nameof(SettingsNavigationListBox.SelectedIndex))
         });
     }
@@ -156,6 +171,16 @@ public partial class SettingsWindow : Window
         {
             PasswordCharacterSetErrorText.Visibility = Visibility.Visible;
             return;
+        }
+
+        var spotlightPreferences = getSpotlightPreferences() with
+        {
+            RememberRecentCommands = RememberRecentCommandsCheckBox.IsChecked == true
+        };
+
+        if (clearSpotlightHistory)
+        {
+            spotlightPreferences = spotlightPreferences.ClearHistory();
         }
 
         var settings = new WidgetSettings
@@ -181,14 +206,22 @@ public partial class SettingsWindow : Window
             PasswordLength = (int)PasswordLengthSlider.Value,
             RunAtStartup = RunAtStartupCheckBox.IsChecked ?? WidgetSettings.Default.RunAtStartup,
             OpenScreenshotEditorAfterCapture = OpenScreenshotEditorCheckBox.IsChecked ?? WidgetSettings.Default.OpenScreenshotEditorAfterCapture,
+            KeepScreenshotHistory = KeepScreenshotHistoryCheckBox.IsChecked ?? WidgetSettings.Default.KeepScreenshotHistory,
             ScreenshotEditor = getScreenshotEditorOptions(),
+            BatteryAlerts = new BatteryAlertSettings
+            {
+                Enabled = BatteryAlertsEnabledCheckBox.IsChecked == true,
+                ThresholdPercent = (int)BatteryAlertThresholdSlider.Value
+            }.Normalize(),
             ShowSeconds = ShowSecondsCheckBox.IsChecked ?? WidgetSettings.Default.ShowSeconds,
             SpotlightShortcuts = shortcutSettings.ToSpotlightShortcuts(),
+            SpotlightPreferences = spotlightPreferences.Normalize(),
             Top = initialSettings.Top,
             UuidVersion = UuidVersionComboBox.SelectedIndex == 1 ? UuidVersion.Version7 : UuidVersion.Version4
         };
 
-        var shortcutError = tryApplySpotlightShortcuts(settings.SpotlightShortcuts);
+        var shortcutError = settings.SpotlightShortcuts.Validate()
+            ?? tryApplySpotlightShortcuts(settings.SpotlightShortcuts);
 
         if (shortcutError is not null)
         {
@@ -230,6 +263,13 @@ public partial class SettingsWindow : Window
             : $"{errorMessage} Spotlight shortcuts could not be restored. {rollbackError}";
     }
 
+    private void HandleClearSpotlightHistory(object sender, RoutedEventArgs e)
+    {
+        clearSpotlightHistory = true;
+        ClearSpotlightHistoryButton.Content = "Clears when saved";
+        ClearSpotlightHistoryButton.IsEnabled = false;
+    }
+
     private bool HasPasswordCharacterSet() => PasswordIncludesDigitsCheckBox.IsChecked == true
         || PasswordIncludesLowercaseCheckBox.IsChecked == true
         || PasswordIncludesSymbolsCheckBox.IsChecked == true
@@ -242,7 +282,9 @@ public partial class SettingsWindow : Window
             throw new InvalidOperationException("The shortcut clear button must identify a Spotlight action.");
         }
 
-        shortcutSettings[actionId].Shortcut = null;
+        shortcutSettings[actionId].Shortcut = actionId == ShortcutSettingsViewModel.PaletteSettingId
+            ? SpotlightShortcuts.DefaultPalette
+            : null;
         ShortcutErrorText.Visibility = Visibility.Collapsed;
     }
 
@@ -286,6 +328,8 @@ public partial class SettingsWindow : Window
         {
             WidgetSettingsPanel.Visibility = page == SettingsPage.Widget ? Visibility.Visible : Visibility.Collapsed;
             ScreenshotSettingsPanel.Visibility = page == SettingsPage.Screenshots ? Visibility.Visible : Visibility.Collapsed;
+            BatterySettingsPanel.Visibility = page == SettingsPage.Battery ? Visibility.Visible : Visibility.Collapsed;
+            SpotlightGeneralSettingsPanel.Visibility = page == SettingsPage.SpotlightGeneral ? Visibility.Visible : Visibility.Collapsed;
             UuidSettingsPanel.Visibility = page == SettingsPage.Uuid ? Visibility.Visible : Visibility.Collapsed;
             PasswordSettingsPanel.Visibility = page == SettingsPage.Password ? Visibility.Visible : Visibility.Collapsed;
             JwtSecretSettingsPanel.Visibility = page == SettingsPage.JwtSecret ? Visibility.Visible : Visibility.Collapsed;
@@ -294,10 +338,12 @@ public partial class SettingsWindow : Window
             {
                 SettingsPage.Widget => WidgetSettingsPageIndex,
                 SettingsPage.Screenshots => ScreenshotSettingsPageIndex,
+                SettingsPage.Battery => BatterySettingsPageIndex,
                 _ => -1
             };
             SpotlightNavigationListBox.SelectedIndex = page switch
             {
+                SettingsPage.SpotlightGeneral => SpotlightGeneralSettingsPageIndex,
                 SettingsPage.Uuid => UuidSettingsPageIndex,
                 SettingsPage.Password => PasswordSettingsPageIndex,
                 SettingsPage.JwtSecret => JwtSecretSettingsPageIndex,
@@ -316,6 +362,8 @@ public partial class SettingsWindow : Window
     {
         Widget,
         Screenshots,
+        Battery,
+        SpotlightGeneral,
         Uuid,
         Password,
         JwtSecret,

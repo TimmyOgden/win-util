@@ -6,7 +6,7 @@ using WinUtil.Services;
 
 namespace WinUtil.Tests;
 
-internal static class ScreenshotDocumentTests
+internal static partial class ScreenshotDocumentTests
 {
     private const int FixtureWidth = 64;
     private const int FixtureHeight = 48;
@@ -267,6 +267,120 @@ internal static class ScreenshotDocumentTests
         var selection = new Int32Rect(8, 8, 16, 16);
         transparent.Add(CreateAnnotation(ScreenshotAnnotationKind.Blur) with { Start = new Point(8, 8), End = new Point(24, 24) });
         AssertOutsideRegionUnchanged(alphaOriginal, ReadPixels(transparent.Render()), FixtureWidth, FixtureHeight, selection);
+    });
+
+    internal static void ReplaceAndRemoveAnnotationsPreserveUndoAndImmutableSnapshots() => RunOnStaThread(() =>
+    {
+        var document = new ScreenshotDocument(CreateBitmap(FixtureWidth, FixtureHeight));
+        var original = CreateAnnotation(ScreenshotAnnotationKind.Rectangle);
+        document.Add(original);
+        var snapshot = document.Annotations;
+        var edited = original with { Start = new Point(12, 12), Color = Colors.Blue };
+        document.Replace(0, edited);
+        TestAssert.Equal(original, snapshot[0]);
+        TestAssert.Equal(edited, document.Annotations[0]);
+        document.Undo();
+        TestAssert.Equal(original, document.Annotations[0]);
+        document.Replace(0, original);
+        TestAssert.True(document.CanRedo);
+        document.Redo();
+        TestAssert.Equal(edited, document.Annotations[0]);
+        document.Remove(0);
+        TestAssert.False(document.HasAnnotations);
+        document.Undo();
+        TestAssert.Equal(edited, document.Annotations[0]);
+        document.Redo();
+        TestAssert.False(document.HasAnnotations);
+        document.Undo();
+        document.Replace(0, original);
+        TestAssert.False(document.CanRedo);
+    });
+
+    internal static void AnnotationEditsRejectInvalidInputWithoutChangingHistory() => RunOnStaThread(() =>
+    {
+        var document = new ScreenshotDocument(CreateBitmap(FixtureWidth, FixtureHeight));
+        var original = CreateAnnotation(ScreenshotAnnotationKind.Rectangle);
+        ExpectException<ArgumentOutOfRangeException>(() => document.Remove(0));
+        ExpectException<ArgumentOutOfRangeException>(() => document.Replace(0, original));
+        document.Add(original);
+
+        foreach (var index in new[] { -1, 1, int.MaxValue })
+        {
+            ExpectException<ArgumentOutOfRangeException>(() => document.Remove(index));
+            ExpectException<ArgumentOutOfRangeException>(() => document.Replace(index, original));
+            ExpectException<ArgumentOutOfRangeException>(() => document.RenderReplacing(index, original));
+        }
+
+        ExpectException<ArgumentNullException>(() => document.Replace(0, null!));
+        ExpectException<ArgumentNullException>(() => document.RenderReplacing(0, null!));
+
+        foreach (var invalid in new[]
+        {
+            original with { End = original.Start },
+            original with { Start = new Point(double.NaN, 0) },
+            original with { StrokeWidth = ScreenshotDocument.MaximumStrokeWidth + 1 },
+            original with { Text = null! },
+            original with { Text = new string('a', ScreenshotDocument.MaximumTextLength + 1) }
+        })
+        {
+            ExpectException<ArgumentException>(() => document.Replace(0, invalid));
+            ExpectException<ArgumentException>(() => document.RenderReplacing(0, invalid));
+        }
+
+        TestAssert.Equal(original, document.Annotations[0]);
+        document.Undo();
+        TestAssert.False(document.HasAnnotations);
+        TestAssert.False(document.CanUndo);
+    });
+
+    internal static void AnnotationPreviewDoesNotChangeDocumentOrHistory() => RunOnStaThread(() =>
+    {
+        var document = new ScreenshotDocument(CreateBitmap(FixtureWidth, FixtureHeight));
+        var original = CreateAnnotation(ScreenshotAnnotationKind.Rectangle);
+        document.Add(original);
+        var initialPixels = ReadPixels(document.Render());
+        var preview = document.RenderReplacing(0, original with { Color = Colors.Blue });
+        TestAssert.False(initialPixels.SequenceEqual(ReadPixels(preview)));
+        TestAssert.SequenceEqual(initialPixels, ReadPixels(document.Render()));
+        TestAssert.Equal(original, document.Annotations[0]);
+        document.Undo();
+        TestAssert.False(document.HasAnnotations);
+        TestAssert.False(document.CanUndo);
+    });
+
+    internal static void AnnotationGeometrySupportsTextArrowsMovementAndResizing() => RunOnStaThread(() =>
+    {
+        var rectangle = CreateAnnotation(ScreenshotAnnotationKind.Rectangle);
+        TestAssert.True(ScreenshotAnnotationGeometry.HitTest(rectangle, new Point(20, 20), 0));
+        TestAssert.False(ScreenshotAnnotationGeometry.HitTest(rectangle, new Point(0, 0), 0));
+        var moved = ScreenshotAnnotationGeometry.Move(rectangle, new Vector(double.MaxValue, double.MaxValue), FixtureWidth, FixtureHeight);
+        TestAssert.Equal(new Point(FixtureWidth, FixtureHeight), moved.End);
+        TestAssert.Equal(new Rect(rectangle.Start, rectangle.End).Size, new Rect(moved.Start, moved.End).Size);
+        var resized = ScreenshotAnnotationGeometry.Resize(rectangle, ScreenshotResizeHandle.TopLeft, new Point(0, 0), FixtureWidth, FixtureHeight);
+        TestAssert.Equal(new Rect(0, 0, 48, 40), ScreenshotAnnotationGeometry.GetBounds(resized));
+        TestAssert.Equal(rectangle, ScreenshotAnnotationGeometry.Resize(rectangle, ScreenshotResizeHandle.TopLeft, rectangle.Start, FixtureWidth, FixtureHeight));
+        TestAssert.Equal(rectangle, ScreenshotAnnotationGeometry.Resize(rectangle, ScreenshotResizeHandle.TopLeft, rectangle.End, FixtureWidth, FixtureHeight));
+
+        var arrow = rectangle with { Kind = ScreenshotAnnotationKind.Arrow, Start = new Point(8, 8), End = new Point(32, 8) };
+        TestAssert.True(ScreenshotAnnotationGeometry.HitTest(arrow, new Point(20, 8), 0));
+        TestAssert.False(ScreenshotAnnotationGeometry.HitTest(arrow, new Point(20, 24), 0));
+        TestAssert.Equal(new Point(40, 20), ScreenshotAnnotationGeometry.Resize(arrow, ScreenshotResizeHandle.End, new Point(40, 20), FixtureWidth, FixtureHeight).End);
+        TestAssert.Equal(arrow, ScreenshotAnnotationGeometry.Resize(arrow, ScreenshotResizeHandle.Start, arrow.End, FixtureWidth, FixtureHeight));
+
+        var text = rectangle with { Kind = ScreenshotAnnotationKind.Text, End = rectangle.Start, Text = "Hello\nWorld" };
+        var textBounds = ScreenshotAnnotationGeometry.GetBounds(text);
+        TestAssert.True(textBounds.Height > text.FontSize);
+        TestAssert.True(ScreenshotAnnotationGeometry.HitTest(text, textBounds.TopLeft, 0));
+        TestAssert.Equal(text, ScreenshotAnnotationGeometry.Move(text, new Vector(), FixtureWidth, FixtureHeight));
+        var movedText = ScreenshotAnnotationGeometry.Move(text, new Vector(-double.MaxValue, -double.MaxValue), FixtureWidth, FixtureHeight);
+        TestAssert.Equal(new Point(), movedText.Start);
+        TestAssert.Equal(movedText.Start, movedText.End);
+        ExpectException<ArgumentNullException>(() => ScreenshotAnnotationGeometry.GetBounds(null!));
+        ExpectException<ArgumentOutOfRangeException>(() => ScreenshotAnnotationGeometry.HitTest(text, new Point(double.NaN, 0), 0));
+        ExpectException<ArgumentOutOfRangeException>(() => ScreenshotAnnotationGeometry.HitTest(text, new Point(), double.PositiveInfinity));
+        ExpectException<ArgumentOutOfRangeException>(() => ScreenshotAnnotationGeometry.Move(text, new Vector(double.NaN, 0), FixtureWidth, FixtureHeight));
+        ExpectException<ArgumentOutOfRangeException>(() => ScreenshotAnnotationGeometry.Move(text, new Vector(), 0, FixtureHeight));
+        ExpectException<ArgumentException>(() => ScreenshotAnnotationGeometry.Resize(text, ScreenshotResizeHandle.BottomRight, new Point(), FixtureWidth, FixtureHeight));
     });
 
     private static ScreenshotAnnotation CreateAnnotation(ScreenshotAnnotationKind kind) => new(kind, new Point(8, 8), new Point(48, 40), Colors.Red);

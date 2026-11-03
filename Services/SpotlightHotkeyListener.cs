@@ -1,36 +1,63 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows.Interop;
+using WinUtil.Models;
 
 namespace WinUtil.Services;
 
 internal sealed class SpotlightHotkeyListener : IDisposable
 {
     internal const int AlreadyRegisteredErrorCode = 1409;
-    internal const string ShortcutDisplayName = "Alt+2";
-
-    private const uint AltModifier = 0x0001;
-    private const uint DigitTwoVirtualKey = 0x32;
-    private const int PaletteHotkeyId = 1;
     private const int HotkeyMessage = 0x0312;
 
     private readonly HwndSource source;
     private readonly HwndSourceHook sourceHook;
     private readonly Action toggleSpotlight;
+    private readonly GlobalShortcut shortcut;
+    private readonly int hotkeyId;
+    private readonly Action<IntPtr, int> unregister;
     private bool hotkeyRegistered;
 
-    internal SpotlightHotkeyListener(IntPtr sourceWindowHandle, Action toggleSpotlight)
+    internal SpotlightHotkeyListener(IntPtr sourceWindowHandle, Action toggleSpotlight, GlobalShortcut shortcut, int hotkeyId)
+        : this(sourceWindowHandle, toggleSpotlight, shortcut, hotkeyId, RegisterNativeHotkey, UnregisterNativeHotkey)
     {
+    }
+
+    internal SpotlightHotkeyListener(
+        IntPtr sourceWindowHandle,
+        Action toggleSpotlight,
+        GlobalShortcut shortcut,
+        int hotkeyId,
+        Action<IntPtr, int, GlobalShortcut> register,
+        Action<IntPtr, int> unregister)
+    {
+        ArgumentNullException.ThrowIfNull(toggleSpotlight);
+        ArgumentNullException.ThrowIfNull(shortcut);
+        ArgumentNullException.ThrowIfNull(register);
+        ArgumentNullException.ThrowIfNull(unregister);
+
+        if (!shortcut.IsValid)
+        {
+            throw new ArgumentException("The Spotlight shortcut must include modifiers and a regular key.", nameof(shortcut));
+        }
+
         source = HwndSource.FromHwnd(sourceWindowHandle)
             ?? throw new InvalidOperationException("The widget window must have a Win32 source before registering the Spotlight shortcut.");
         this.toggleSpotlight = toggleSpotlight;
+        this.shortcut = shortcut;
+        this.hotkeyId = hotkeyId;
+        this.unregister = unregister;
         sourceHook = HandleWindowMessage;
         source.AddHook(sourceHook);
 
-        if (!RegisterHotKey(sourceWindowHandle, PaletteHotkeyId, AltModifier, DigitTwoVirtualKey))
+        try
+        {
+            register(sourceWindowHandle, hotkeyId, shortcut);
+        }
+        catch
         {
             source.RemoveHook(sourceHook);
-            throw new Win32Exception(Marshal.GetLastWin32Error(), $"Unable to register the {ShortcutDisplayName} shortcut.");
+            throw;
         }
 
         hotkeyRegistered = true;
@@ -43,13 +70,23 @@ internal sealed class SpotlightHotkeyListener : IDisposable
             return;
         }
 
-        if (!UnregisterHotKey(source.Handle, PaletteHotkeyId))
+        if (!source.IsDisposed)
         {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), $"Unable to unregister the {ShortcutDisplayName} shortcut.");
+            try
+            {
+                unregister(source.Handle, hotkeyId);
+            }
+            catch (Win32Exception exception)
+            {
+                throw new Win32Exception(exception.NativeErrorCode, $"Unable to unregister the {ShortcutFormatter.Format(shortcut)} shortcut. {exception.Message}");
+            }
         }
 
         hotkeyRegistered = false;
-        source.RemoveHook(sourceHook);
+        if (!source.IsDisposed)
+        {
+            source.RemoveHook(sourceHook);
+        }
     }
 
     private IntPtr HandleWindowMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -59,7 +96,7 @@ internal sealed class SpotlightHotkeyListener : IDisposable
             return IntPtr.Zero;
         }
 
-        if (wParam.ToInt32() != PaletteHotkeyId)
+        if (wParam.ToInt32() != hotkeyId)
         {
             return IntPtr.Zero;
         }
@@ -67,6 +104,22 @@ internal sealed class SpotlightHotkeyListener : IDisposable
         toggleSpotlight();
         handled = true;
         return IntPtr.Zero;
+    }
+
+    private static void RegisterNativeHotkey(IntPtr windowHandle, int hotkeyId, GlobalShortcut shortcut)
+    {
+        if (!RegisterHotKey(windowHandle, hotkeyId, shortcut.Modifiers, shortcut.VirtualKey))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), $"Unable to register the {ShortcutFormatter.Format(shortcut)} shortcut.");
+        }
+    }
+
+    private static void UnregisterNativeHotkey(IntPtr windowHandle, int hotkeyId)
+    {
+        if (!UnregisterHotKey(windowHandle, hotkeyId))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
     }
 
     [DllImport("user32.dll", SetLastError = true)]

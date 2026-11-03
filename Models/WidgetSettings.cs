@@ -26,7 +26,11 @@ internal sealed record WidgetSettings
 
     public bool OpenScreenshotEditorAfterCapture { get; init; } = true;
 
+    public bool KeepScreenshotHistory { get; init; } = true;
+
     public ScreenshotEditorOptions ScreenshotEditor { get; init; } = new();
+
+    public BatteryAlertSettings BatteryAlerts { get; init; } = new();
 
     public int AutoHideDelaySeconds { get; init; } = DefaultAutoHideDelaySeconds;
 
@@ -55,6 +59,8 @@ internal sealed record WidgetSettings
     public bool ShowSeconds { get; init; } = true;
 
     public SpotlightShortcuts SpotlightShortcuts { get; init; } = new();
+
+    public SpotlightPreferences SpotlightPreferences { get; init; } = new();
 
     public UuidVersion UuidVersion { get; init; } = UuidVersion.Version4;
 
@@ -86,7 +92,9 @@ internal sealed record WidgetSettings
             PasswordIncludesUppercase = HasPasswordCharacterSet ? PasswordIncludesUppercase : Default.PasswordIncludesUppercase,
             PasswordLength = Math.Clamp(PasswordLength, MinimumPasswordLength, MaximumPasswordLength),
             ScreenshotEditor = (ScreenshotEditor ?? new ScreenshotEditorOptions()).Normalize(),
+            BatteryAlerts = (BatteryAlerts ?? new BatteryAlertSettings()).Normalize(),
             SpotlightShortcuts = (SpotlightShortcuts ?? new SpotlightShortcuts()).Normalize(),
+            SpotlightPreferences = (SpotlightPreferences ?? new SpotlightPreferences()).Normalize(),
             Top = NormalizePosition(Top),
             UuidVersion = Enum.IsDefined(UuidVersion) ? UuidVersion : Default.UuidVersion
         };

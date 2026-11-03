@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
 using WinUtil.Models;
 using WinUtil.Services;
@@ -10,13 +11,26 @@ internal sealed class SpotlightViewModel : INotifyPropertyChanged
 {
     private readonly IReadOnlyList<SpotlightAction> actions;
     private readonly ObservableCollection<SpotlightAction> matchingActions = [];
+    private readonly Func<SpotlightPreferences>? getPreferences;
+    private readonly Action<SpotlightPreferences>? savePreferences;
+    private SpotlightPreferences localPreferences = new();
+    private string preferenceErrorMessage = string.Empty;
     private string errorMessage = string.Empty;
     private string query = string.Empty;
     private SpotlightAction? selectedAction;
+    private bool isWorkspaceOpen;
 
-    internal SpotlightViewModel(IReadOnlyList<SpotlightAction> actions)
+    internal SpotlightViewModel(
+        IReadOnlyList<SpotlightAction> actions,
+        Action<string>? copyText = null,
+        Func<SpotlightPreferences>? getPreferences = null,
+        Action<SpotlightPreferences>? savePreferences = null)
     {
+        ArgumentNullException.ThrowIfNull(actions);
         this.actions = actions;
+        this.getPreferences = getPreferences;
+        this.savePreferences = savePreferences;
+        Workspace = new SpotlightWorkspaceViewModel(actions, copyText ?? System.Windows.Clipboard.SetText, RecordSuccessfulAction);
         MatchingActions = new ReadOnlyObservableCollection<SpotlightAction>(matchingActions);
         RefreshMatches();
     }
@@ -43,6 +57,16 @@ internal sealed class SpotlightViewModel : INotifyPropertyChanged
 
     public bool HasQuery => !string.IsNullOrWhiteSpace(Query);
 
+    public string ResultsLabel => HasQuery ? "Matching commands" : HasSuggestions ? "Favorites and recent commands" : "All commands";
+
+    private bool HasSuggestions => GetPreferences().FavoriteActionIds.Length > 0 || GetPreferences().RecentActionIds.Length > 0;
+
+    public SpotlightWorkspaceViewModel Workspace { get; }
+
+    public bool IsWorkspaceOpen => isWorkspaceOpen;
+
+    public bool IsPaletteOpen => !isWorkspaceOpen;
+
     public ReadOnlyObservableCollection<SpotlightAction> MatchingActions { get; }
 
     public string Query
@@ -58,7 +82,7 @@ internal sealed class SpotlightViewModel : INotifyPropertyChanged
             }
 
             query = nextQuery;
-            ErrorMessage = string.Empty;
+            ErrorMessage = preferenceErrorMessage;
             RefreshMatches();
             OnPropertyChanged();
             OnPropertyChanged(nameof(HasQuery));
@@ -98,8 +122,9 @@ internal sealed class SpotlightViewModel : INotifyPropertyChanged
 
     internal void Reset()
     {
+        CloseWorkspace();
         query = string.Empty;
-        ErrorMessage = string.Empty;
+        ErrorMessage = preferenceErrorMessage;
         SelectedAction = null;
         RefreshMatches();
         OnPropertyChanged(nameof(Query));
@@ -108,14 +133,75 @@ internal sealed class SpotlightViewModel : INotifyPropertyChanged
 
     internal void ShowInsertionError(string message) => ErrorMessage = message;
 
+    internal void ToggleFavorite(string actionId)
+    {
+        var preferences = GetPreferences().ToggleFavorite(actionId);
+        SavePreferences(preferences, "Favorite could not be saved.");
+    }
+
+    internal void RecordSuccessfulAction(string actionId)
+    {
+        var preferences = GetPreferences();
+        if (!preferences.RememberRecentCommands)
+        {
+            return;
+        }
+
+        SavePreferences(preferences.RecordSuccess(actionId), "The command completed, but recent commands could not be saved.");
+    }
+
+    private SpotlightPreferences GetPreferences() => (getPreferences?.Invoke() ?? localPreferences).Normalize();
+
+    private void SavePreferences(SpotlightPreferences preferences, string failureMessage)
+    {
+        try
+        {
+            savePreferences?.Invoke(preferences);
+            localPreferences = preferences;
+            preferenceErrorMessage = string.Empty;
+            ErrorMessage = string.Empty;
+            RefreshMatches();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            preferenceErrorMessage = $"{failureMessage} {exception.Message}";
+            ErrorMessage = preferenceErrorMessage;
+            if (IsWorkspaceOpen)
+            {
+                Workspace.ShowPreferenceError(preferenceErrorMessage);
+            }
+        }
+    }
+
+    internal void OpenWorkspace()
+    {
+        Workspace.Reset(SelectedAction);
+        isWorkspaceOpen = true;
+        ErrorMessage = string.Empty;
+        OnPropertyChanged(nameof(IsWorkspaceOpen));
+        OnPropertyChanged(nameof(IsPaletteOpen));
+    }
+
+    internal void CloseWorkspace()
+    {
+        Workspace.Reset();
+        isWorkspaceOpen = false;
+        OnPropertyChanged(nameof(IsWorkspaceOpen));
+        OnPropertyChanged(nameof(IsPaletteOpen));
+    }
+
     private void RefreshMatches()
     {
         var previousSelection = SelectedAction;
         matchingActions.Clear();
 
-        var filteredActions = HasQuery
-            ? SpotlightActionCatalog.Filter(actions, Query)
-            : [];
+        var preferences = GetPreferences();
+        var filteredActions = SpotlightSearch.Rank(actions, Query, preferences);
+
+        foreach (var action in actions)
+        {
+            action.SetFavorite(preferences.FavoriteActionIds.Contains(action.Id, StringComparer.Ordinal));
+        }
 
         foreach (var action in filteredActions)
         {
@@ -126,6 +212,7 @@ internal sealed class SpotlightViewModel : INotifyPropertyChanged
             ? previousSelection
             : MatchingActions.FirstOrDefault();
         OnPropertyChanged(nameof(HasMatches));
+        OnPropertyChanged(nameof(ResultsLabel));
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>

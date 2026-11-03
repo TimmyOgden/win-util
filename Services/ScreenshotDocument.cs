@@ -29,11 +29,13 @@ internal sealed class ScreenshotDocument
     private const double MinimumArrowHeadLength = 12;
     private const double ArrowHeadLengthRatio = 0.5;
     private const double ArrowHeadWidthRatio = 0.5;
+    private const int FullRotationQuarterTurns = 4;
 
     private readonly BitmapSource source;
-    private ImmutableArray<ScreenshotAnnotation> annotations = [];
-    private ImmutableStack<ImmutableArray<ScreenshotAnnotation>> undoHistory = ImmutableStack<ImmutableArray<ScreenshotAnnotation>>.Empty;
-    private ImmutableStack<ImmutableArray<ScreenshotAnnotation>> redoHistory = ImmutableStack<ImmutableArray<ScreenshotAnnotation>>.Empty;
+    private readonly bool sourceIsOpaque;
+    private ScreenshotDocumentState state;
+    private ImmutableStack<ScreenshotDocumentState> undoHistory = ImmutableStack<ScreenshotDocumentState>.Empty;
+    private ImmutableStack<ScreenshotDocumentState> redoHistory = ImmutableStack<ScreenshotDocumentState>.Empty;
 
     internal ScreenshotDocument(BitmapSource source)
     {
@@ -46,30 +48,134 @@ internal sealed class ScreenshotDocument
             throw new ArgumentOutOfRangeException(nameof(source), "The screenshot dimensions exceed the editor's image limits.");
         }
 
-        Width = source.PixelWidth;
-        Height = source.PixelHeight;
+        SourceWidth = source.PixelWidth;
+        SourceHeight = source.PixelHeight;
+        state = new ScreenshotDocumentState([], new Rect(0, 0, SourceWidth, SourceHeight), 0, SourceWidth, SourceHeight);
         var convertedSource = source.Format == PixelFormats.Pbgra32
             ? source
             : new FormatConvertedBitmap(source, PixelFormats.Pbgra32, null, 0);
         var stride = checked(Width * BytesPerPixel);
         var pixels = new byte[checked(stride * Height)];
         convertedSource.CopyPixels(pixels, stride, 0);
+        sourceIsOpaque = HasOpaquePixels(pixels);
         this.source = CreateBitmap(pixels);
     }
 
-    internal int Width { get; }
-    internal int Height { get; }
+    internal int Width => state.Width;
+    internal int Height => state.Height;
+    internal int SourceWidth { get; }
+    internal int SourceHeight { get; }
+    internal ScreenshotDocumentState State => state;
+    internal Matrix SourceToOutput => CreateSourceToOutput(state);
+    internal Matrix OutputToSource => Invert(SourceToOutput);
     internal bool CanUndo => !undoHistory.IsEmpty;
     internal bool CanRedo => !redoHistory.IsEmpty;
-    internal bool HasAnnotations => !annotations.IsEmpty;
+    internal bool HasAnnotations => !state.Annotations.IsEmpty;
+    internal ImmutableArray<ScreenshotAnnotation> Annotations => state.Annotations;
+
+    internal bool HasSameContent(ScreenshotDocumentState other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        return state.SourceRegion == other.SourceRegion && state.QuarterTurns == other.QuarterTurns &&
+            Width == other.Width && Height == other.Height && Annotations.SequenceEqual(other.Annotations);
+    }
+
+    internal Matrix GetAnnotationToOutput(ScreenshotAnnotation annotation)
+    {
+        ArgumentNullException.ThrowIfNull(annotation);
+        ValidateTransform(annotation.LocalToSource);
+        var transform = Matrix.Multiply(annotation.LocalToSource, SourceToOutput);
+        ValidateTransform(transform);
+        return transform;
+    }
+
+    internal Rect GetAnnotationLocalBounds(ScreenshotAnnotation annotation)
+    {
+        ArgumentNullException.ThrowIfNull(annotation);
+        ValidateTransform(annotation.LocalToSource);
+        return TransformBounds(new Rect(0, 0, SourceWidth, SourceHeight), Invert(annotation.LocalToSource));
+    }
+
+    internal bool Crop(Int32Rect outputBounds)
+    {
+        if (outputBounds.X < 0 || outputBounds.Y < 0 || outputBounds.Width <= 0 || outputBounds.Height <= 0 ||
+            (long)outputBounds.X + outputBounds.Width > Width || (long)outputBounds.Y + outputBounds.Height > Height)
+        {
+            throw new ArgumentOutOfRangeException(nameof(outputBounds), "The crop must be a nonempty region inside the image.");
+        }
+
+        if (outputBounds == new Int32Rect(0, 0, Width, Height)) { return false; }
+        var region = TransformBounds(new Rect(outputBounds.X, outputBounds.Y, outputBounds.Width, outputBounds.Height), OutputToSource);
+        return Commit(state with { SourceRegion = region, Width = outputBounds.Width, Height = outputBounds.Height });
+    }
+
+    internal bool Resize(int width, int height)
+    {
+        ValidateDimensions(width, height);
+        var expectedHeight = Math.Max(1, Math.Round((double)Height * width / Width, MidpointRounding.AwayFromZero));
+        var expectedWidth = Math.Max(1, Math.Round((double)Width * height / Height, MidpointRounding.AwayFromZero));
+        if (height != expectedHeight && width != expectedWidth)
+        {
+            throw new ArgumentException("Resize dimensions must preserve the image aspect ratio.");
+        }
+
+        return Commit(state with { Width = width, Height = height });
+    }
+
+    internal bool RotateClockwise() => Rotate(1);
+
+    internal bool RotateCounterclockwise() => Rotate(FullRotationQuarterTurns - 1);
+
+    private bool Rotate(int quarterTurns) => Commit(state with
+    {
+        QuarterTurns = (state.QuarterTurns + quarterTurns) % FullRotationQuarterTurns,
+        Width = Height,
+        Height = Width
+    });
+
+    private bool Commit(ScreenshotDocumentState updated)
+    {
+        ValidateTransform(CreateSourceToOutput(updated));
+        if (HasSameContent(updated)) { return false; }
+        undoHistory = undoHistory.Push(state);
+        state = updated;
+        redoHistory = ImmutableStack<ScreenshotDocumentState>.Empty;
+        return true;
+    }
 
     internal void Add(ScreenshotAnnotation annotation)
     {
         ArgumentNullException.ThrowIfNull(annotation);
         var normalizedAnnotation = Normalize(annotation);
-        undoHistory = undoHistory.Push(annotations);
-        annotations = annotations.Add(normalizedAnnotation);
-        redoHistory = ImmutableStack<ImmutableArray<ScreenshotAnnotation>>.Empty;
+        Commit(state with { Annotations = Annotations.Add(normalizedAnnotation) });
+    }
+
+    internal void Replace(int index, ScreenshotAnnotation annotation)
+    {
+        ValidateIndex(index);
+        ArgumentNullException.ThrowIfNull(annotation);
+        var normalizedAnnotation = Normalize(annotation);
+
+        if (Annotations[index] == normalizedAnnotation)
+        {
+            return;
+        }
+
+        Commit(state with { Annotations = Annotations.SetItem(index, normalizedAnnotation) });
+    }
+
+    internal void Remove(int index)
+    {
+        ValidateIndex(index);
+        Commit(state with { Annotations = Annotations.RemoveAt(index) });
+    }
+
+    private void ValidateIndex(int index)
+    {
+        if (index < 0 || index >= Annotations.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(index), "Select an existing annotation.");
+        }
     }
 
     internal void Undo()
@@ -79,8 +185,8 @@ internal sealed class ScreenshotDocument
             return;
         }
 
-        redoHistory = redoHistory.Push(annotations);
-        annotations = undoHistory.Peek();
+        redoHistory = redoHistory.Push(state);
+        state = undoHistory.Peek();
         undoHistory = undoHistory.Pop();
     }
 
@@ -91,31 +197,58 @@ internal sealed class ScreenshotDocument
             return;
         }
 
-        undoHistory = undoHistory.Push(annotations);
-        annotations = redoHistory.Peek();
+        undoHistory = undoHistory.Push(state);
+        state = redoHistory.Peek();
         redoHistory = redoHistory.Pop();
     }
 
-    internal BitmapSource Render()
+    internal BitmapSource Render() => Render(Annotations);
+
+    internal BitmapSource RenderReplacing(int index, ScreenshotAnnotation annotation)
     {
-        var composed = source;
-        var pendingAnnotations = new List<ScreenshotAnnotation>();
+        ValidateIndex(index);
+        ArgumentNullException.ThrowIfNull(annotation);
+        return Render(Annotations.SetItem(index, Normalize(annotation)));
+    }
 
-        foreach (var annotation in annotations)
+    private BitmapSource Render(ImmutableArray<ScreenshotAnnotation> renderedAnnotations)
+    {
+        if (renderedAnnotations.IsEmpty) { return RenderSource(); }
+        var background = new ImageDrawing(source, new Rect(0, 0, SourceWidth, SourceHeight));
+        var layers = new DrawingGroup();
+        layers.Children.Add(background);
+        foreach (var annotation in renderedAnnotations)
         {
-            if (annotation.Kind == ScreenshotAnnotationKind.Blur)
+            var layer = new DrawingGroup { Transform = new MatrixTransform(annotation.LocalToSource) };
+            using (var drawing = layer.Open())
             {
-                composed = DrawAnnotations(composed, pendingAnnotations);
-                composed = ApplyBlur(composed, annotation);
-                pendingAnnotations.Clear();
+                if (annotation.Kind == ScreenshotAnnotationKind.Blur)
+                {
+                    var bounds = GetBlurPixelBounds(annotation);
+                    drawing.DrawImage(RenderBlurPatch(annotation, bounds, layers), bounds);
+                    var uncovered = new DrawingGroup
+                    {
+                        ClipGeometry = new CombinedGeometry(GeometryCombineMode.Exclude,
+                            new RectangleGeometry(new Rect(0, 0, SourceWidth, SourceHeight)),
+                            new RectangleGeometry(TransformBounds(bounds, annotation.LocalToSource)))
+                    };
+                    uncovered.Children.Add(layers);
+                    layers = new DrawingGroup();
+                    layers.Children.Add(uncovered);
+                }
+                else
+                {
+                    DrawAnnotation(drawing, annotation);
+                }
             }
-            else
-            {
-                pendingAnnotations.Add(annotation);
-            }
+            layer.Freeze();
+            layers.Children.Add(layer);
         }
-
-        return DrawAnnotations(composed, pendingAnnotations);
+        var croppedSource = CreateCroppedSourceDrawing();
+        background.ImageSource = croppedSource.ImageSource;
+        background.Rect = croppedSource.Rect;
+        layers.Freeze();
+        return DrawLayers(layers);
     }
 
     private ScreenshotAnnotation Normalize(ScreenshotAnnotation annotation)
@@ -137,12 +270,14 @@ internal sealed class ScreenshotDocument
             throw new ArgumentException("The annotation text exceeds the supported length.", nameof(annotation));
         }
 
-        var start = Clip(annotation.Start);
-        var end = Clip(annotation.End);
+        var localBounds = GetAnnotationLocalBounds(annotation);
+        _ = GetAnnotationToOutput(annotation);
+        var start = Clip(annotation.Start, localBounds);
+        var end = Clip(annotation.End, localBounds);
 
         if (annotation.Kind == ScreenshotAnnotationKind.Text)
         {
-            if (string.IsNullOrWhiteSpace(annotation.Text) || start.X >= Width || start.Y >= Height)
+            if (string.IsNullOrWhiteSpace(annotation.Text) || start.X >= localBounds.Right || start.Y >= localBounds.Bottom)
             {
                 throw new ArgumentException("Text must contain visible characters and start inside the screenshot.", nameof(annotation));
             }
@@ -159,39 +294,132 @@ internal sealed class ScreenshotDocument
             throw new ArgumentException("The selected region must have a nonzero width and height.", nameof(annotation));
         }
 
-        return annotation with { Start = start, End = end };
+        var normalized = annotation with { Start = start, End = end };
+        if (annotation.Kind == ScreenshotAnnotationKind.Blur) { _ = GetBlurPixelBounds(normalized); }
+        return normalized;
     }
 
-    private Point Clip(Point point) => new(Math.Clamp(point.X, 0, Width), Math.Clamp(point.Y, 0, Height));
+    private static Point Clip(Point point, Rect bounds) => new(Math.Clamp(point.X, bounds.Left, bounds.Right), Math.Clamp(point.Y, bounds.Top, bounds.Bottom));
 
     private static bool IsFinite(Point point) => double.IsFinite(point.X) && double.IsFinite(point.Y);
 
     private static bool IsInRange(double value, double minimum, double maximum) => double.IsFinite(value) && value >= minimum && value <= maximum;
 
-    private BitmapSource DrawAnnotations(BitmapSource background, IReadOnlyList<ScreenshotAnnotation> pendingAnnotations)
+    private static void ValidateDimensions(int width, int height)
     {
-        if (pendingAnnotations.Count == 0)
+        if (width < 1 || height < 1 || width > MaximumSourceDimension || height > MaximumSourceDimension ||
+            (long)width * height > MaximumPixelCount)
         {
-            return background;
+            throw new ArgumentOutOfRangeException(nameof(width), "The image dimensions exceed the editor's image limits.");
         }
+    }
 
+    private static Matrix CreateSourceToOutput(ScreenshotDocumentState content)
+    {
+        var region = content.SourceRegion;
+        var isRotated = content.QuarterTurns % 2 != 0;
+        var scaleX = content.Width / (isRotated ? region.Height : region.Width);
+        var scaleY = content.Height / (isRotated ? region.Width : region.Height);
+        return content.QuarterTurns switch
+        {
+            0 => new Matrix(scaleX, 0, 0, scaleY, -region.Left * scaleX, -region.Top * scaleY),
+            1 => new Matrix(0, scaleY, -scaleX, 0, region.Bottom * scaleX, -region.Left * scaleY),
+            2 => new Matrix(-scaleX, 0, 0, -scaleY, region.Right * scaleX, region.Bottom * scaleY),
+            3 => new Matrix(0, -scaleY, scaleX, 0, -region.Top * scaleX, region.Right * scaleY),
+            _ => throw new ArgumentOutOfRangeException(nameof(content))
+        };
+    }
+
+    private static void ValidateTransform(Matrix transform)
+    {
+        var axisAligned = (transform.M12 == 0 && transform.M21 == 0 && transform.M11 != 0 && transform.M22 != 0)
+            || (transform.M11 == 0 && transform.M22 == 0 && transform.M12 != 0 && transform.M21 != 0);
+        if (!IsFinite(transform) || !axisAligned || !transform.HasInverse ||
+            !double.IsFinite(transform.Determinant) || transform.Determinant <= 0 || !IsFinite(Invert(transform)))
+        {
+            throw new ArgumentException("Image transforms must use finite, invertible scaling and quarter-turn rotations.", nameof(transform));
+        }
+    }
+
+    private static bool IsFinite(Matrix matrix) => double.IsFinite(matrix.M11) && double.IsFinite(matrix.M12)
+        && double.IsFinite(matrix.M21) && double.IsFinite(matrix.M22) && double.IsFinite(matrix.OffsetX) && double.IsFinite(matrix.OffsetY);
+
+    private static Matrix Invert(Matrix matrix)
+    {
+        matrix.Invert();
+        return matrix;
+    }
+
+    private static Rect TransformBounds(Rect bounds, Matrix transform)
+    {
+        var start = transform.Transform(bounds.TopLeft);
+        var end = transform.Transform(bounds.BottomRight);
+        if (!IsFinite(start) || !IsFinite(end))
+        {
+            throw new ArgumentException("The transformed image bounds exceed the supported coordinate range.", nameof(transform));
+        }
+        var transformed = new Rect(start, end);
+        if (!double.IsFinite(transformed.Width) || !double.IsFinite(transformed.Height) || transformed.Width <= 0 || transformed.Height <= 0)
+        {
+            throw new ArgumentException("The transformed image bounds must have a finite width and height.", nameof(transform));
+        }
+        return transformed;
+    }
+
+    private BitmapSource RenderSource()
+    {
+        var transform = SourceToOutput;
+        if (transform.IsIdentity && Width == SourceWidth && Height == SourceHeight) { return source; }
+        var visual = new DrawingVisual();
+        RenderOptions.SetBitmapScalingMode(visual, BitmapScalingMode.HighQuality);
+        using (var drawing = visual.RenderOpen())
+        {
+            drawing.PushClip(new RectangleGeometry(new Rect(0, 0, Width, Height)));
+            drawing.PushTransform(new MatrixTransform(transform));
+            drawing.DrawDrawing(CreateCroppedSourceDrawing());
+            drawing.Pop();
+            drawing.Pop();
+        }
+        return RenderVisual(visual, Width, Height);
+    }
+
+    private ImageDrawing CreateCroppedSourceDrawing()
+    {
+        var region = state.SourceRegion;
+        var left = Math.Max(0, (int)Math.Floor(region.Left));
+        var top = Math.Max(0, (int)Math.Floor(region.Top));
+        var right = Math.Min(SourceWidth, (int)Math.Ceiling(region.Right));
+        var bottom = Math.Min(SourceHeight, (int)Math.Ceiling(region.Bottom));
+        var sourceBounds = new Int32Rect(left, top, right - left, bottom - top);
+        var croppedSource = new CroppedBitmap(source, sourceBounds);
+        croppedSource.Freeze();
+        return new ImageDrawing(croppedSource, new Rect(left, top, sourceBounds.Width, sourceBounds.Height));
+    }
+
+    private BitmapSource DrawLayers(DrawingGroup layers)
+    {
         var visual = new DrawingVisual();
         TextOptions.SetTextRenderingMode(visual, TextRenderingMode.Grayscale);
+        RenderOptions.SetBitmapScalingMode(visual, BitmapScalingMode.HighQuality);
 
         using (var drawing = visual.RenderOpen())
         {
-            drawing.DrawImage(background, new Rect(0, 0, Width, Height));
             drawing.PushClip(new RectangleGeometry(new Rect(0, 0, Width, Height)));
 
-            foreach (var annotation in pendingAnnotations)
-            {
-                DrawAnnotation(drawing, annotation);
-            }
-
+            drawing.PushTransform(new MatrixTransform(SourceToOutput));
+            // WPF exclusion groups can round opaque glyph alpha down; opaque source images must remain opaque after these edits.
+            if (sourceIsOpaque) { drawing.DrawDrawing(CreateCroppedSourceDrawing()); }
+            drawing.DrawDrawing(layers);
+            drawing.Pop();
             drawing.Pop();
         }
 
-        var bitmap = new RenderTargetBitmap(Width, Height, RenderDpi, RenderDpi, PixelFormats.Pbgra32);
+        return RenderVisual(visual, Width, Height);
+    }
+
+    private static BitmapSource RenderVisual(DrawingVisual visual, int width, int height)
+    {
+        var bitmap = new RenderTargetBitmap(width, height, RenderDpi, RenderDpi, PixelFormats.Pbgra32);
         bitmap.Render(visual);
         bitmap.Freeze();
         return bitmap;
@@ -245,38 +473,54 @@ internal sealed class ScreenshotDocument
         }
     }
 
-    private BitmapSource ApplyBlur(BitmapSource background, ScreenshotAnnotation annotation)
+    private static Rect GetBlurPixelBounds(ScreenshotAnnotation annotation)
     {
         var bounds = new Rect(annotation.Start, annotation.End);
-        var left = (int)Math.Floor(bounds.Left);
-        var top = (int)Math.Floor(bounds.Top);
-        var right = (int)Math.Ceiling(bounds.Right);
-        var bottom = (int)Math.Ceiling(bounds.Bottom);
+        var left = Math.Floor(bounds.Left);
+        var top = Math.Floor(bounds.Top);
+        var right = Math.Ceiling(bounds.Right);
+        var bottom = Math.Ceiling(bounds.Bottom);
         var width = right - left;
         var height = bottom - top;
-        var regionStride = checked(width * BytesPerPixel);
-        var regionPixels = new byte[checked(regionStride * height)];
-        background.CopyPixels(new Int32Rect(left, top, width, height), regionPixels, regionStride, 0);
-        var buffer = new byte[regionPixels.Length];
+        if (width < 1 || height < 1 || width > MaximumSourceDimension || height > MaximumSourceDimension || width * height > MaximumPixelCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(annotation), "The blur selection exceeds the editor's image limits.");
+        }
+        return new Rect(left, top, width, height);
+    }
+
+    private BitmapSource RenderBlurPatch(ScreenshotAnnotation annotation, Rect bounds, DrawingGroup previousLayers)
+    {
+        var sourceToPatch = Invert(annotation.LocalToSource);
+        sourceToPatch.Translate(-bounds.Left, -bounds.Top);
+        var width = (int)bounds.Width;
+        var height = (int)bounds.Height;
+        var visual = new DrawingVisual();
+        TextOptions.SetTextRenderingMode(visual, TextRenderingMode.Grayscale);
+        RenderOptions.SetBitmapScalingMode(visual, BitmapScalingMode.HighQuality);
+        using (var drawing = visual.RenderOpen())
+        {
+            drawing.PushClip(new RectangleGeometry(new Rect(0, 0, width, height)));
+            drawing.PushTransform(new MatrixTransform(sourceToPatch));
+            if (sourceIsOpaque) { drawing.DrawImage(source, new Rect(0, 0, SourceWidth, SourceHeight)); }
+            drawing.DrawDrawing(previousLayers);
+            drawing.Pop();
+            drawing.Pop();
+        }
+        var background = RenderVisual(visual, width, height);
+        var stride = checked(width * BytesPerPixel);
+        var pixels = new byte[checked(stride * height)];
+        background.CopyPixels(pixels, stride, 0);
+        var buffer = new byte[pixels.Length];
         var radius = (int)Math.Ceiling(annotation.BlurRadius);
 
-        // Restrict every pass to the selection so no untouched edge pixels survive as an overlay.
+        // Filtering before the document crop keeps existing blur edges unchanged when the image is cropped again.
         for (var pass = 0; pass < BlurPassCount; pass++)
         {
-            BlurAxis(regionPixels, buffer, width, height, radius, horizontal: true);
-            BlurAxis(buffer, regionPixels, width, height, radius, horizontal: false);
+            BlurAxis(pixels, buffer, width, height, radius, horizontal: true);
+            BlurAxis(buffer, pixels, width, height, radius, horizontal: false);
         }
-
-        var stride = checked(Width * BytesPerPixel);
-        var pixels = new byte[checked(stride * Height)];
-        background.CopyPixels(pixels, stride, 0);
-
-        for (var row = 0; row < height; row++)
-        {
-            Buffer.BlockCopy(regionPixels, row * regionStride, pixels, (top + row) * stride + left * BytesPerPixel, regionStride);
-        }
-
-        return CreateBitmap(pixels);
+        return CreateBitmap(pixels, width, height);
     }
 
     private static void BlurAxis(byte[] input, byte[] output, int width, int height, int radius, bool horizontal)
@@ -293,9 +537,17 @@ internal sealed class ScreenshotDocument
             Array.Clear(sums);
             var lineStart = line * lineStep;
 
-            for (var offset = -radius; offset <= radius; offset++)
+            var firstPixelCopies = radius + 1;
+            var lastPixelCopies = Math.Max(0, radius - lineLength + 1);
+            for (var channel = 0; channel < BytesPerPixel; channel++)
             {
-                var index = lineStart + Math.Clamp(offset, 0, lineLength - 1) * pixelStep;
+                sums[channel] = input[lineStart + channel] * firstPixelCopies
+                    + input[lineStart + (lineLength - 1) * pixelStep + channel] * lastPixelCopies;
+            }
+
+            for (var offset = 1; offset <= Math.Min(radius, lineLength - 1); offset++)
+            {
+                var index = lineStart + offset * pixelStep;
 
                 for (var channel = 0; channel < BytesPerPixel; channel++)
                 {
@@ -318,9 +570,20 @@ internal sealed class ScreenshotDocument
         }
     }
 
-    private BitmapSource CreateBitmap(byte[] pixels)
+    private BitmapSource CreateBitmap(byte[] pixels) => CreateBitmap(pixels, Width, Height);
+
+    private static bool HasOpaquePixels(ReadOnlySpan<byte> pixels)
     {
-        var bitmap = BitmapSource.Create(Width, Height, RenderDpi, RenderDpi, PixelFormats.Pbgra32, null, pixels, checked(Width * BytesPerPixel));
+        for (var index = BytesPerPixel - 1; index < pixels.Length; index += BytesPerPixel)
+        {
+            if (pixels[index] != byte.MaxValue) { return false; }
+        }
+        return true;
+    }
+
+    private static BitmapSource CreateBitmap(byte[] pixels, int width, int height)
+    {
+        var bitmap = BitmapSource.Create(width, height, RenderDpi, RenderDpi, PixelFormats.Pbgra32, null, pixels, checked(width * BytesPerPixel));
         bitmap.Freeze();
         return bitmap;
     }

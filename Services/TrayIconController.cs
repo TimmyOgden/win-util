@@ -12,11 +12,14 @@ internal sealed class TrayIconController : IDisposable
     private readonly Icon trayIcon;
     private bool disposed;
 
-    internal TrayIconController(Action showWidget, Action showSettings, Action exitApplication)
+    internal TrayIconController(Action showWidget, Action showSettings, Action exitApplication, Action openImage, Action pasteImage, Action showScreenshotHistory)
     {
         contextMenu = new ContextMenuStrip();
         contextMenu.Items.Add("Show widget", null, (_, _) => showWidget());
         contextMenu.Items.Add("Settings", null, (_, _) => showSettings());
+        contextMenu.Items.Add("Open image…", null, (_, _) => openImage());
+        contextMenu.Items.Add("Paste image", null, (_, _) => pasteImage());
+        contextMenu.Items.Add("Screenshot history", null, (_, _) => showScreenshotHistory());
         contextMenu.Items.Add(new ToolStripSeparator());
         contextMenu.Items.Add("Exit", null, (_, _) => exitApplication());
 

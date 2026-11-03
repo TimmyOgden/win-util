@@ -9,10 +9,15 @@ internal sealed class ShortcutSettingViewModel : INotifyPropertyChanged
     private GlobalShortcut? shortcut;
 
     internal ShortcutSettingViewModel(SpotlightAction action, GlobalShortcut? shortcut)
+        : this(action.Id, action.Title, action.Description, shortcut)
     {
-        ActionId = action.Id;
-        Title = action.Title;
-        Description = action.Description;
+    }
+
+    internal ShortcutSettingViewModel(string actionId, string title, string description, GlobalShortcut? shortcut)
+    {
+        ActionId = actionId;
+        Title = title;
+        Description = description;
         this.shortcut = shortcut;
     }
 
@@ -27,6 +32,8 @@ internal sealed class ShortcutSettingViewModel : INotifyPropertyChanged
     public string DisplayText => ShortcutFormatter.Format(shortcut);
 
     public bool IsAssigned => shortcut is not null;
+
+    public string ClearLabel => ActionId == ShortcutSettingsViewModel.PaletteSettingId ? "Reset" : "Clear";
 
     public string AutomationHelpText => $"Click and press the physical key combination to assign the {Title} shortcut.";
 
@@ -52,10 +59,17 @@ internal sealed record ShortcutSettingGroup(string Title, IReadOnlyList<Shortcut
 
 internal sealed class ShortcutSettingsViewModel
 {
+    internal const string PaletteSettingId = "spotlight-palette";
+
     private readonly IReadOnlyDictionary<string, ShortcutSettingViewModel> shortcutsByActionId;
 
     internal ShortcutSettingsViewModel(IReadOnlyList<SpotlightAction> actions, SpotlightShortcuts shortcuts)
     {
+        Palette = new ShortcutSettingViewModel(
+            PaletteSettingId,
+            "Open Spotlight",
+            "Open Spotlight from any app. Reset restores Alt+2.",
+            shortcuts.Normalize().Palette);
         var settings = actions
             .Select(action => new ShortcutSettingViewModel(action, shortcuts.GetShortcut(action.Id)))
             .ToArray();
@@ -70,13 +84,17 @@ internal sealed class ShortcutSettingsViewModel
 
     public IReadOnlyDictionary<string, ShortcutSettingViewModel> Shortcuts { get; }
 
+    public ShortcutSettingViewModel Palette { get; }
+
     public IReadOnlyList<ShortcutSettingGroup> TextToolGroups { get; }
 
-    internal ShortcutSettingViewModel this[string actionId] => shortcutsByActionId.TryGetValue(actionId, out var setting)
-        ? setting
-        : throw new ArgumentOutOfRangeException(nameof(actionId), actionId, "Unsupported Spotlight action.");
+    internal ShortcutSettingViewModel this[string actionId] => actionId == PaletteSettingId
+        ? Palette
+        : shortcutsByActionId.TryGetValue(actionId, out var setting)
+            ? setting
+            : throw new ArgumentOutOfRangeException(nameof(actionId), actionId, "Unsupported Spotlight action.");
 
     internal SpotlightShortcuts ToSpotlightShortcuts() => shortcutsByActionId.Values.Aggregate(
-        new SpotlightShortcuts(),
+        new SpotlightShortcuts { Palette = Palette.Shortcut ?? SpotlightShortcuts.DefaultPalette },
         (shortcuts, setting) => shortcuts.WithShortcut(setting.ActionId, setting.Shortcut));
 }

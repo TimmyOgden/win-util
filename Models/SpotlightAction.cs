@@ -1,10 +1,12 @@
+using System.ComponentModel;
 using WinUtil.Services;
 
 namespace WinUtil.Models;
 
-internal sealed class SpotlightAction
+internal sealed class SpotlightAction : INotifyPropertyChanged
 {
     private readonly Func<string?, string> createOutput;
+    private bool isFavorite;
 
     private SpotlightAction(
         string id,
@@ -35,6 +37,21 @@ internal sealed class SpotlightAction
     public IReadOnlyList<string> SearchTerms { get; }
 
     public string Title { get; }
+
+    public bool IsFavorite => isFavorite;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    internal void SetFavorite(bool value)
+    {
+        if (isFavorite == value)
+        {
+            return;
+        }
+
+        isFavorite = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsFavorite)));
+    }
 
     internal static SpotlightAction CreateGenerator(
         string id,

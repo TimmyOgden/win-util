@@ -6,6 +6,7 @@ namespace WinUtil.Tests;
 internal static class SpotlightShortcutsTests
 {
     private const uint LetterJVirtualKey = 0x4A;
+    private const uint SampleScanCode = 0x24;
 
     internal static void NormalizeRemovesInvalidShortcuts()
     {
@@ -96,5 +97,31 @@ internal static class SpotlightShortcutsTests
         var error = shortcuts.Validate();
 
         TestAssert.Equal("Alt+2 is reserved for opening Spotlight.", error);
+    }
+
+    internal static void NormalizeRestoresMissingOrInvalidPaletteShortcuts()
+    {
+        foreach (var palette in new GlobalShortcut?[]
+        {
+            null,
+            new() { Modifiers = 0, VirtualKey = LetterJVirtualKey },
+            new() { Modifiers = GlobalShortcut.ControlModifier, VirtualKey = GlobalShortcut.MaximumVirtualKey + 1 },
+            new() { Modifiers = GlobalShortcut.WindowsModifier, VirtualKey = LetterJVirtualKey }
+        })
+        {
+            TestAssert.Equal(SpotlightShortcuts.DefaultPalette, (new SpotlightShortcuts { Palette = palette! }).Normalize().Palette);
+        }
+    }
+
+    internal static void ValidateUsesTheConfiguredPaletteShortcut()
+    {
+        var palette = new GlobalShortcut { Modifiers = GlobalShortcut.ControlModifier, VirtualKey = LetterJVirtualKey };
+        var shortcuts = new SpotlightShortcuts { Palette = palette, Uuid = SpotlightShortcuts.DefaultPalette };
+
+        TestAssert.Equal<string?>(null, shortcuts.Validate());
+        TestAssert.Equal(palette, shortcuts.Normalize().Palette);
+        TestAssert.Equal("Ctrl+J is reserved for opening Spotlight.", (shortcuts with { Uuid = palette }).Validate());
+        TestAssert.Equal("Ctrl+J is reserved for opening Spotlight.", (shortcuts with { Uuid = palette with { ScanCode = SampleScanCode } }).Validate());
+        TestAssert.True((shortcuts with { Palette = null! }).Validate() is not null);
     }
 }

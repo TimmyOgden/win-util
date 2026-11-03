@@ -76,4 +76,20 @@ internal static class ShortcutSettingsViewModelTests
 
         TestAssert.False(notified);
     }
+
+    internal static void PaletteSettingRoundTripsSeparatelyFromActionShortcuts()
+    {
+        var viewModel = new ShortcutSettingsViewModel(SpotlightActionCatalog.All, new SpotlightShortcuts { Palette = SampleShortcut });
+
+        TestAssert.Equal(SampleShortcut, viewModel.Palette.Shortcut);
+        TestAssert.Equal(viewModel.Palette, viewModel[ShortcutSettingsViewModel.PaletteSettingId]);
+        TestAssert.Equal("Open Spotlight", viewModel.Palette.Title);
+        TestAssert.Equal("Reset", viewModel.Palette.ClearLabel);
+        TestAssert.Equal(SampleShortcut, viewModel.ToSpotlightShortcuts().Palette);
+        TestAssert.Empty(viewModel.ToSpotlightShortcuts().GetBindings());
+
+        viewModel.Palette.Shortcut = null;
+
+        TestAssert.Equal(SpotlightShortcuts.DefaultPalette, viewModel.ToSpotlightShortcuts().Palette);
+    }
 }

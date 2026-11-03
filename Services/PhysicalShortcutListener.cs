@@ -4,7 +4,16 @@ using WinUtil.Models;
 
 namespace WinUtil.Services;
 
-internal sealed class PhysicalShortcutListener : IDisposable
+internal interface IPhysicalShortcutListener : IDisposable
+{
+    void BeginCapture(Action<ShortcutCaptureResult> captureCallback);
+
+    void EndCapture();
+
+    void UpdateBindings(IReadOnlyList<SpotlightShortcutBinding> bindings);
+}
+
+internal sealed class PhysicalShortcutListener : IPhysicalShortcutListener
 {
     private const int ExtendedKeyFlag = 0x0001;
     private const int LowLevelKeyboardHook = 13;
@@ -55,6 +64,12 @@ internal sealed class PhysicalShortcutListener : IDisposable
     }
 
     internal void UpdateBindings(IReadOnlyList<SpotlightShortcutBinding> bindings) => processor.UpdateBindings(bindings);
+
+    void IPhysicalShortcutListener.BeginCapture(Action<ShortcutCaptureResult> captureCallback) => BeginCapture(captureCallback);
+
+    void IPhysicalShortcutListener.EndCapture() => EndCapture();
+
+    void IPhysicalShortcutListener.UpdateBindings(IReadOnlyList<SpotlightShortcutBinding> bindings) => UpdateBindings(bindings);
 
     private IntPtr HandleKeyboardEvent(int code, IntPtr windowParameter, IntPtr keyboardData)
     {

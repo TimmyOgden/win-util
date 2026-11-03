@@ -5,6 +5,7 @@
         xmlns:controls="clr-namespace:WinUtil.Views.Controls"
         xmlns:viewModels="clr-namespace:WinUtil.ViewModels"
         Title="WinUtil settings"
+        WindowStyle="None" Icon="{StaticResource WinUtilWindowIcon}"
         Width="960"
         Height="720"
         MinWidth="820"
@@ -15,6 +16,9 @@
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Display"
         WindowStartupLocation="CenterScreen">
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="40" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False" />
+  </WindowChrome.WindowChrome>
   <Window.Resources>
     <sys:Double x:Key="MinimumBackgroundOpacity">0.55</sys:Double>
     <sys:Double x:Key="MinimumFadedOpacity">0.10</sys:Double>
@@ -118,7 +122,7 @@
                  AutomationProperties.HelpText="{Binding AutomationHelpText}" />
         <Button Style="{StaticResource ClearButton}"
                 Tag="{Binding ActionId}"
-                Content="Clear"
+                Content="{Binding ClearLabel}"
                 IsEnabled="{Binding IsAssigned}"
                 Click="HandleClearShortcut" />
       </StackPanel>
@@ -152,12 +156,18 @@
   </Window.Resources>
 
   <Grid Background="{StaticResource CanvasBrush}">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="40" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
     <Grid.ColumnDefinitions>
       <ColumnDefinition Width="196" />
       <ColumnDefinition Width="*" />
     </Grid.ColumnDefinitions>
 
-    <Border Background="{StaticResource SurfaceBrush}" Padding="12,24"
+    <controls:ScreenshotTitleBar x:Name="SettingsTitleBar" Grid.ColumnSpan="2" />
+
+    <Border Grid.Row="1" Background="{StaticResource SurfaceBrush}" Padding="12,24"
             BorderBrush="{StaticResource DividerBrush}" BorderThickness="0,0,1,0">
       <StackPanel>
         <TextBlock Margin="12,0,0,28"
@@ -171,6 +181,7 @@
                  AutomationProperties.Name="General settings">
           <ListBoxItem Content="Desktop widget" />
           <ListBoxItem Content="Screenshots" />
+          <ListBoxItem Content="Battery" />
         </ListBox>
 
         <TextBlock Margin="12,0,0,8" Style="{StaticResource SectionLabelText}" Text="Spotlight" />
@@ -178,6 +189,7 @@
                  Style="{StaticResource NavigationListBox}"
                  SelectionChanged="HandleSpotlightNavigationSelectionChanged"
                  AutomationProperties.Name="Spotlight settings">
+          <ListBoxItem Content="General" />
           <ListBoxItem Content="UUID" />
           <ListBoxItem Content="Password" />
           <ListBoxItem Content="JWT secret" />
@@ -186,7 +198,7 @@
       </StackPanel>
     </Border>
 
-    <Grid Grid.Column="1">
+    <Grid Grid.Row="1" Grid.Column="1">
       <Grid.RowDefinitions>
         <RowDefinition Height="*" />
         <RowDefinition Height="Auto" />
@@ -372,6 +384,12 @@
                             Style="{StaticResource SettingsCheckBox}"
                             AutomationProperties.Name="Open editor after a screenshot" />
                 </controls:SettingRow>
+                <controls:SettingRow Title="Keep screenshot history"
+                                     Description="Save captures, imported images and exports on this device. Previous history remains available when turned off.">
+                  <CheckBox x:Name="KeepScreenshotHistoryCheckBox"
+                            Style="{StaticResource SettingsCheckBox}"
+                            AutomationProperties.Name="Keep screenshot history" />
+                </controls:SettingRow>
               </StackPanel>
             </Border>
             <TextBlock Margin="0,28,0,8" Style="{StaticResource SubtitleText}" Text="In the editor" />
@@ -380,9 +398,68 @@
                 <TextBlock Style="{StaticResource BaseText}"
                            Text="Arrows, shapes, text and area blur" />
                 <TextBlock Margin="0,5,0,0" Style="{StaticResource SecondaryText}"
-                           Text="Copy the finished image or save a PNG at its original resolution." />
+                           Text="Open or paste an image, crop, resize, or rotate it. Copy the finished image or save a PNG at its current pixel dimensions." />
                 <TextBlock Margin="0,16,0,0" Style="{StaticResource SecondaryText}"
                            Text="Your colour, line width, text size and blur strength are remembered when you close the editor." />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <StackPanel x:Name="BatterySettingsPanel" Visibility="Collapsed">
+            <StackPanel Style="{StaticResource PageHeader}">
+              <TextBlock Style="{StaticResource TitleText}" Text="Battery" />
+              <TextBlock Margin="0,2,0,0" Style="{StaticResource SecondaryText}"
+                         Text="Low-battery alerts for this device and connected Bluetooth devices." />
+            </StackPanel>
+            <TextBlock Style="{StaticResource SettingsGroupHeading}" Text="Notifications" />
+            <Border Style="{StaticResource SettingsGroup}">
+              <StackPanel>
+                <controls:SettingRow Title="Low-battery alerts"
+                                     Description="Notify once when a battery reaches the threshold. Another alert is possible after it recovers above the threshold.">
+                  <CheckBox x:Name="BatteryAlertsEnabledCheckBox" Style="{StaticResource SettingsCheckBox}"
+                            AutomationProperties.Name="Low-battery alerts" />
+                </controls:SettingRow>
+                <Border Style="{StaticResource CardDivider}" />
+                <controls:SettingRow Title="Alert at or below"
+                                     Description="Charging and plugged-in devices do not trigger alerts.">
+                  <StackPanel Width="180">
+                    <TextBlock HorizontalAlignment="Right" Style="{StaticResource ValueText}"
+                               Text="{Binding ElementName=BatteryAlertThresholdSlider, Path=Value, StringFormat={}{0:0}%}" />
+                    <Slider x:Name="BatteryAlertThresholdSlider" TickFrequency="1" IsSnapToTickEnabled="True"
+                            Style="{StaticResource SettingsSlider}"
+                            IsEnabled="{Binding ElementName=BatteryAlertsEnabledCheckBox, Path=IsChecked}"
+                            AutomationProperties.Name="Low-battery alert threshold" />
+                  </StackPanel>
+                </controls:SettingRow>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <StackPanel x:Name="SpotlightGeneralSettingsPanel" Visibility="Collapsed">
+            <StackPanel Style="{StaticResource PageHeader}">
+              <TextBlock Style="{StaticResource TitleText}" Text="Spotlight" />
+              <TextBlock Margin="0,2,0,0"
+                         Style="{StaticResource SecondaryText}"
+                         Text="Choose how to open your tools and commands." />
+            </StackPanel>
+            <TextBlock Style="{StaticResource SettingsGroupHeading}" Text="Keyboard" />
+            <Border Style="{StaticResource SettingsGroup}">
+              <controls:SettingRow Title="Open Spotlight"
+                                   Description="Use Ctrl, Alt, or Shift with a key. Reset restores Alt+2."
+                                   Content="{Binding Palette}" />
+            </Border>
+            <TextBlock Style="{StaticResource SettingsGroupHeading}" Text="Recent commands" />
+            <Border Style="{StaticResource SettingsGroup}">
+              <StackPanel>
+                <controls:SettingRow Title="Remember recent commands"
+                                     Description="Keep the last 10 successful commands. Input and results are not stored.">
+                  <CheckBox x:Name="RememberRecentCommandsCheckBox" Style="{StaticResource SettingsCheckBox}"
+                            AutomationProperties.Name="Remember recent commands" />
+                </controls:SettingRow>
+                <controls:SettingRow Title="Clear command history" Description="Applies when you save changes. Favorites are kept.">
+                  <Button x:Name="ClearSpotlightHistoryButton" Content="Clear history"
+                          Style="{StaticResource SecondaryButton}" Click="HandleClearSpotlightHistory" />
+                </controls:SettingRow>
               </StackPanel>
             </Border>
           </StackPanel>

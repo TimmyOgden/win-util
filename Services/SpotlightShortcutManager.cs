@@ -14,17 +14,37 @@ internal interface ISpotlightShortcutManager : IDisposable
 
 internal sealed class SpotlightShortcutManager : ISpotlightShortcutManager
 {
-    private readonly Action<string> executeAction;
-    private readonly IntPtr sourceWindowHandle;
-    private readonly Action toggleSpotlight;
-    private PhysicalShortcutListener? actionShortcutListener;
-    private SpotlightHotkeyListener? paletteHotkeyListener;
+    private const int FirstPaletteHotkeyId = 1;
+    private const int SecondPaletteHotkeyId = 2;
+
+    private readonly Func<IPhysicalShortcutListener> createActionListener;
+    private readonly Func<GlobalShortcut, int, IDisposable> createPaletteListener;
+    private IPhysicalShortcutListener? actionShortcutListener;
+    private IDisposable? paletteHotkeyListener;
+    private GlobalShortcut? registeredPalette;
+    private int nextPaletteHotkeyId = FirstPaletteHotkeyId;
+    private bool isCapturing;
 
     internal SpotlightShortcutManager(IntPtr sourceWindowHandle, Action toggleSpotlight, Action<string> executeAction)
     {
-        this.sourceWindowHandle = sourceWindowHandle;
-        this.toggleSpotlight = toggleSpotlight;
-        this.executeAction = executeAction;
+        createActionListener = () => new PhysicalShortcutListener(executeAction);
+        createPaletteListener = (shortcut, hotkeyId) => new SpotlightHotkeyListener(sourceWindowHandle, () =>
+        {
+            if (!isCapturing)
+            {
+                toggleSpotlight();
+            }
+        }, shortcut, hotkeyId);
+    }
+
+    internal SpotlightShortcutManager(
+        Func<IPhysicalShortcutListener> createActionListener,
+        Func<GlobalShortcut, int, IDisposable> createPaletteListener)
+    {
+        ArgumentNullException.ThrowIfNull(createActionListener);
+        ArgumentNullException.ThrowIfNull(createPaletteListener);
+        this.createActionListener = createActionListener;
+        this.createPaletteListener = createPaletteListener;
     }
 
     public void Dispose()
@@ -33,6 +53,7 @@ internal sealed class SpotlightShortcutManager : ISpotlightShortcutManager
         actionShortcutListener = null;
         paletteHotkeyListener?.Dispose();
         paletteHotkeyListener = null;
+        registeredPalette = null;
     }
 
     internal void BeginShortcutCapture(Action<ShortcutCaptureResult> captureCallback)
@@ -43,13 +64,19 @@ internal sealed class SpotlightShortcutManager : ISpotlightShortcutManager
             return;
         }
 
+        isCapturing = true;
         actionShortcutListener.BeginCapture(captureCallback);
     }
 
-    internal void EndShortcutCapture() => actionShortcutListener?.EndCapture();
+    internal void EndShortcutCapture()
+    {
+        isCapturing = false;
+        actionShortcutListener?.EndCapture();
+    }
 
     internal string? TryApply(SpotlightShortcuts shortcuts)
     {
+        ArgumentNullException.ThrowIfNull(shortcuts);
         var normalizedShortcuts = shortcuts.Normalize();
         var validationError = normalizedShortcuts.Validate();
 
@@ -60,39 +87,71 @@ internal sealed class SpotlightShortcutManager : ISpotlightShortcutManager
 
         if (actionShortcutListener is null)
         {
-            var startupError = TryStartListeners();
-
-            if (startupError is not null)
+            try
             {
-                return startupError;
+                actionShortcutListener = createActionListener();
+                actionShortcutListener.UpdateBindings(normalizedShortcuts.GetBindings());
+            }
+            catch (Win32Exception exception)
+            {
+                return exception.Message;
             }
         }
 
-        var listener = actionShortcutListener
-            ?? throw new InvalidOperationException("The Spotlight shortcut listener did not start.");
-        listener.UpdateBindings(normalizedShortcuts.GetBindings());
+        var registrationError = TryApplyPalette(normalizedShortcuts.Palette);
+
+        if (registrationError is not null)
+        {
+            return registrationError;
+        }
+
+        actionShortcutListener.UpdateBindings(normalizedShortcuts.GetBindings());
         return null;
     }
 
-    private string? TryStartListeners()
+    private string? TryApplyPalette(GlobalShortcut shortcut)
     {
+        if (registeredPalette is { } current && current.Modifiers == shortcut.Modifiers && current.VirtualKey == shortcut.VirtualKey)
+        {
+            return null;
+        }
+
+        IDisposable replacement;
+
         try
         {
-            paletteHotkeyListener = new SpotlightHotkeyListener(sourceWindowHandle, toggleSpotlight);
-            actionShortcutListener = new PhysicalShortcutListener(executeAction);
-            return null;
+            // Windows hotkeys cannot be replaced atomically under the same registration identifier.
+            replacement = createPaletteListener(shortcut, nextPaletteHotkeyId);
         }
         catch (Win32Exception exception)
         {
-            actionShortcutListener?.Dispose();
-            actionShortcutListener = null;
-            paletteHotkeyListener?.Dispose();
-            paletteHotkeyListener = null;
-
             return exception.NativeErrorCode == SpotlightHotkeyListener.AlreadyRegisteredErrorCode
-                ? $"{SpotlightHotkeyListener.ShortcutDisplayName} is already in use by another app."
+                ? $"{ShortcutFormatter.Format(shortcut)} is already in use by another app."
                 : exception.Message;
         }
+
+        try
+        {
+            paletteHotkeyListener?.Dispose();
+        }
+        catch (Win32Exception exception)
+        {
+            try
+            {
+                replacement.Dispose();
+            }
+            catch (Win32Exception rollbackException)
+            {
+                throw new AggregateException("The Spotlight shortcut could not be changed or rolled back.", exception, rollbackException);
+            }
+
+            return exception.Message;
+        }
+
+        paletteHotkeyListener = replacement;
+        registeredPalette = shortcut;
+        nextPaletteHotkeyId = nextPaletteHotkeyId == FirstPaletteHotkeyId ? SecondPaletteHotkeyId : FirstPaletteHotkeyId;
+        return null;
     }
 
     void ISpotlightShortcutManager.BeginShortcutCapture(Action<ShortcutCaptureResult> captureCallback) => BeginShortcutCapture(captureCallback);

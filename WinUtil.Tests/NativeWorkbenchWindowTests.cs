@@ -19,6 +19,7 @@ internal static class NativeWorkbenchWindowTests
     private const double MaximumItemWidthDifference = 24;
     private const double TestOpacity = 0.8;
     private const double TestBackgroundOpacity = 0.7;
+    private const double PreviewOutputVolume = 60;
     private const string PreviewClock = "09:41:00";
     private const string PreviewDate = "Friday, 16 October";
 
@@ -36,7 +37,15 @@ internal static class NativeWorkbenchWindowTests
             settings,
             _ => { },
             new SyntheticBatteryProvider(new BatterySnapshot([new("Laptop", 86), new("Wireless keyboard", 72)], null)),
-            new SyntheticAudioProvider(new AudioDeviceSnapshot("Studio speakers", "USB microphone", null)));
+            new SyntheticAudioProvider(new AudioDeviceSnapshot("Studio speakers", "USB microphone", null)
+            {
+                OutputDevices = [new("studio-speakers", "Studio speakers")],
+                InputDevices = [new("usb-microphone", "USB microphone")],
+                DefaultOutputDeviceId = "studio-speakers",
+                DefaultInputDeviceId = "usb-microphone",
+                OutputVolumePercent = PreviewOutputVolume,
+                IsMicrophoneMuted = false
+            }));
 
         try
         {
@@ -148,6 +157,7 @@ internal static class NativeWorkbenchWindowTests
             var scroller = FindDescendants<ScrollViewer>(window.ActionResultsListBox).Single();
             TestAssert.True(scroller.ScrollableHeight > 0);
             TestAssert.True(window.ActionResultsListBox.ActualHeight <= MaximumResultHeight);
+            viewModel.SelectedAction = viewModel.MatchingActions.First();
             viewModel.MoveSelection(window.ActionResultsListBox.Items.Count - 1);
             UpdateBindingsAndLayout(window);
             TestAssert.Equal(viewModel.MatchingActions.Last(), viewModel.SelectedAction);
@@ -157,6 +167,31 @@ internal static class NativeWorkbenchWindowTests
             TestAssert.True(selectedPosition.Y >= 0);
             TestAssert.True(selectedPosition.Y + selectedItem.ActualHeight <= scroller.ActualHeight);
             ExportPreviewWhenRequested(window, "spotlight-scrolled.png");
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    internal static void SpotlightReportsMissingSelectionForEveryTextTool() => RunOnStaThread(() =>
+    {
+        EnsureApplicationResources();
+        var window = new SpotlightWindow(() => WidgetSettings.Default);
+        using var controller = new SpotlightController(window, new MissingSelectionTextInjector(), () => WidgetSettings.Default);
+
+        try
+        {
+            var viewModel = (SpotlightViewModel)window.DataContext;
+
+            foreach (var action in SpotlightActionCatalog.All.Where(action => action.RequiresSelectedText))
+            {
+                viewModel.Reset();
+                controller.ExecuteAction(action.Id);
+
+                TestAssert.True(viewModel.HasError);
+                TestAssert.Equal("Select text in the original app before running this tool.", viewModel.ErrorMessage);
+            }
         }
         finally
         {
@@ -248,6 +283,17 @@ internal static class NativeWorkbenchWindowTests
         }
     }
 
+    private sealed class MissingSelectionTextInjector : IForegroundTextInjector
+    {
+        public IntPtr CaptureForegroundWindow() => IntPtr.Zero;
+
+        public void InsertText(IntPtr targetWindow, string text) =>
+            throw new InvalidOperationException("Text tools must use selected-text replacement.");
+
+        public Task ReplaceSelectedTextAsync(IntPtr targetWindow, Func<string, string> transformer) =>
+            Task.FromException(new SelectedTextUnavailableException());
+    }
+
     private sealed class SyntheticBatteryProvider(BatterySnapshot snapshot) : IBatteryStatusProvider
     {
         public Task<BatterySnapshot> GetSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(snapshot);
@@ -256,5 +302,9 @@ internal static class NativeWorkbenchWindowTests
     private sealed class SyntheticAudioProvider(AudioDeviceSnapshot snapshot) : IAudioDeviceProvider
     {
         public AudioDeviceSnapshot GetSnapshot() => snapshot;
+        public AudioOperationResult SetDefaultOutput(string deviceId) => throw new InvalidOperationException("Read-only audio fake received an output command.");
+        public AudioOperationResult SetDefaultInput(string deviceId) => throw new InvalidOperationException("Read-only audio fake received an input command.");
+        public AudioOperationResult SetOutputVolume(double percentage) => throw new InvalidOperationException("Read-only audio fake received a volume command.");
+        public AudioOperationResult SetMicrophoneMute(bool muted) => throw new InvalidOperationException("Read-only audio fake received a mute command.");
     }
 }
